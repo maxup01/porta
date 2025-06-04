@@ -1,2 +1,2 @@
-#[cfg(test)]
 pub mod query;
+pub mod route;
