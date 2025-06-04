@@ -1,1 +1,3 @@
-pub mod query_tests;
+#[cfg(test)]
+mod query_tests;
+mod route_tests;
