@@ -1,13 +1,16 @@
-use utils::request::route::{Method, get_route_function, register_route};
+use utils::request::route::{Method, get_route_function, register_route, extract_path_from_request};
 
 const PATH_FOR_GET_METHOD: &str = "/get-mapping";
 const PATH_FOR_POST_METHOD: &str = "/post-mapping";
 const PATH_FOR_PATCH_METHOD: &str = "/patch-mapping";
 const PATH_FOR_DELETE_METHOD: &str = "/delete-mapping";
 const PATH_THAT_NOT_EXIST: &str = "/mapping-that-not-exists";
+const REQUEST_WITH_PATH: &str = "GET /mapping/some";
+const PATH: &str = "/mapping/some";
+const RANDOM_STR_WITHOUT_SPACE: &str = "hbdabhiafhahifinhafnih";
 
 #[test]
-fn test_register_and_get_route() {
+pub fn test_register_and_get_route() {
 
     let random_function = |param: &str| {param.to_string()};
 
@@ -39,4 +42,15 @@ fn test_register_and_get_route() {
 
     let func_opt = get_route_function(PATH_THAT_NOT_EXIST, Method::DELETE);
     assert!(func_opt.is_none());
+}
+
+#[test]
+pub fn test_extract_path_from_request() {
+
+    let path = extract_path_from_request(REQUEST_WITH_PATH);
+    let none = extract_path_from_request(RANDOM_STR_WITHOUT_SPACE);
+
+    assert!(path.is_some());
+    assert_eq!(path.unwrap(), PATH);
+    assert!(none.is_none());
 }
