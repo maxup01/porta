@@ -68,3 +68,12 @@ pub fn register_route(method: Method, path: &str, function: fn(&str) -> String) 
 
     map_with_routes.insert(path.to_string(), function);
 }
+
+pub fn extract_path_from_request(request: &str) -> Option<String> {
+    let mut parts = request.split(' ');
+    parts.next()?;
+
+    let path = parts.next()?;
+
+    Some(path.to_string())
+}
