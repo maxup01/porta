@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json; 
 use chrono::Utc;
 
@@ -59,13 +59,18 @@ pub fn status_code_from_http_status(http_status: HttpStatus) -> u32 {
     map_with_statuses.get(&http_status).unwrap().clone()
 }
 
-pub struct HttpResponse<T: Serialize> {
+pub struct HttpResponse<T>
+where 
+    T: Serialize + for<'de> Deserialize<'de>
+{
     value: T,
     status: HttpStatus
 }
 
-impl<T: Serialize> HttpResponse<T> {
-    
+impl<T> HttpResponse<T>
+where 
+    T: Serialize + for<'de> Deserialize<'de>
+{
     pub fn new(value: T, status: HttpStatus) -> HttpResponse<T> {
         HttpResponse {
             value,
@@ -82,7 +87,10 @@ impl<T: Serialize> HttpResponse<T> {
     }
 }
 
-pub fn format_response<T: Serialize>(response :HttpResponse<T>) -> String {
+pub fn format_response<T>(response :HttpResponse<T>) -> String
+where 
+    T: Serialize + for<'de> Deserialize<'de>
+{
 
     let status = response.status();
     let value = response.value();
