@@ -90,6 +90,7 @@ pub fn is_path_matching_route_path(route_path: &str, path: &str) -> bool {
     for (route_path_part, path_part) in route_path_parts.iter().zip(path_parts.iter()) {
         if (route_path_part != path_part && !route_path_part.starts_with('{') && !route_path_part.ends_with('}')) 
             || (route_path_part.starts_with('{') && route_path_part.ends_with('}') 
+            && !(path_part.starts_with('{') && path_part.ends_with('}')) 
             && (path_part.starts_with('{') || path_part.ends_with('}'))) {
             return false;
         }
