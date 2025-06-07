@@ -314,3 +314,72 @@ pub fn post(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pr
 
     expanded.into()
 }
+
+#[proc_macro_attribute]
+pub fn patch(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let args = parse_macro_input!(args as AttributeArgs);
+    let input_fn = parse_macro_input!(input as ItemFn);
+
+    let fn_name = &input_fn.sig.ident;
+    let fn_block = &input_fn.block;
+    let fn_vis = &input_fn.vis;
+
+    let mut path = None;
+    let mut fn_args: Vec<(syn::Ident, syn::Type)> = vec![];
+
+    for arg in args.iter() {
+        if let NestedMeta::Meta(meta) = arg {
+            match meta {
+                Meta::NameValue(nv) => {
+                    if nv.path.get_ident().unwrap() == "path" {
+                        path = Some(nv.lit.clone())
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let path= match path.unwrap() {
+        syn::Lit::Str(lit_str) => lit_str.value(),
+        _ => panic!("Expected a string literal for path"),
+    };
+
+    for arg in &input_fn.sig.inputs {
+        if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
+            if let Pat::Ident(pat_ident) = &**pat {
+                fn_args.push((pat_ident.ident.clone(), (**ty).clone()));
+            }
+        }
+    }
+
+    let register_fn_name = format_ident!("register_route_{}", fn_name);
+
+    let mut deserialized_args = vec![];
+
+    deserialized_args.push(generate_deserialization_block_for_request_body(fn_args.get(0).unwrap()));
+
+    let expanded = quote! {
+        use utils::request::route::{register_route, Method};
+        use utils::response::http_response::format_response;
+        use utils::request::request_body::extract_request_body;
+        use serde_json;
+
+        #fn_vis fn #fn_name(request: &str) -> String {
+
+            let request_body = &extract_request_body(request).unwrap_or_else(|| panic!("Failed to extract request body"));
+
+            #( #deserialized_args )*
+
+            let fn_result = (|| #fn_block )();
+            format_response(fn_result)
+        }
+        
+        #[ctor::ctor]
+        fn #register_fn_name() {
+            register_route(Method::PATCH, #path, #fn_name);
+        }   
+    };
+
+    expanded.into()
+}
