@@ -12,7 +12,6 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
         let arg_str = arg_name.to_string();
         let ty_str = quote!(#arg_type).to_string();
 
-        // Handle common numeric types with .parse()
         if ty_str == "u8" || ty_str == "u16" || ty_str == "u32" || ty_str == "u64" || ty_str == "usize"
             || ty_str == "i8" || ty_str == "i16" || ty_str == "i32" || ty_str == "i64" || ty_str == "isize"
             || ty_str == "f32" || ty_str == "f64"
@@ -23,7 +22,6 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                     .expect(&format!("Failed to parse argument {} as {}", #arg_str, #ty_str));
             });
         }
-        // Handle bool
         else if ty_str == "bool" {
             deserialized.push(quote! {
                 let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
@@ -34,14 +32,12 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 };
             });
         }
-        // Handle String
         else if ty_str == "String" {
             deserialized.push(quote! {
                 let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
                 let #arg_name: #arg_type = param_val_orig.to_string();
             });
         }
-        // Fallback to serde_json for other types (structs, etc.)
         else {
             deserialized.push(quote! {
                 let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
@@ -90,7 +86,7 @@ pub fn get(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pro
     }
 
     let path= match path.unwrap() {
-        syn::Lit::Str(lit_str) => lit_str.value(), // extract the inner string value
+        syn::Lit::Str(lit_str) => lit_str.value(),
         _ => panic!("Expected a string literal for path"),
     };
 
@@ -157,7 +153,7 @@ pub fn delete(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> 
     }
 
     let path= match path.unwrap() {
-        syn::Lit::Str(lit_str) => lit_str.value(), // extract the inner string value
+        syn::Lit::Str(lit_str) => lit_str.value(),
         _ => panic!("Expected a string literal for path"),
     };
 
