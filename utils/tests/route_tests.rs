@@ -1,4 +1,4 @@
-use utils::request::route::{Method, get_route_function, register_route, extract_path_from_request};
+use utils::request::route::{Method, get_route_function, register_route, extract_path_from_request, is_path_matching_route_path};
 
 const PATH_FOR_GET_METHOD: &str = "/get-mapping";
 const PATH_FOR_POST_METHOD: &str = "/post-mapping";
@@ -53,4 +53,16 @@ pub fn test_extract_path_from_request() {
     assert!(path.is_some());
     assert_eq!(path.unwrap(), PATH);
     assert!(none.is_none());
+}
+
+#[test]
+pub fn is_path_matching_route_path_test() {
+    let path = "/mapping/same";
+    let route_path = r#"/mapping/{param}"#;
+    let not_matching_path = "/mapping/other}";
+    let second_not_matching_path = "/mapping";
+
+    assert!(is_path_matching_route_path(route_path, path));
+    assert!(!is_path_matching_route_path(route_path, not_matching_path));
+    assert!(!is_path_matching_route_path(route_path, second_not_matching_path));
 }
