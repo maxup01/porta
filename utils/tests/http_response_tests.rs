@@ -49,8 +49,8 @@ pub fn test_of_status_code_from_http_status() {
 #[test]
 pub fn test_of_http_response_structure() {
 
-    let random_http_response = HttpResponse::new(RANDOM_VALUE_WITH_TYPE_IMPLEMENTING_SERIALIZABLE, RANDOM_HTTP_STATUS);
+    let random_http_response = HttpResponse::new(RANDOM_VALUE_WITH_TYPE_IMPLEMENTING_SERIALIZABLE.to_string(), RANDOM_HTTP_STATUS);
 
     assert_eq!(status_code_from_http_status(random_http_response.status()), status_code_from_http_status(RANDOM_HTTP_STATUS));
-    assert_eq!(random_http_response.value(), RANDOM_VALUE_WITH_TYPE_IMPLEMENTING_SERIALIZABLE);
+    assert_eq!(random_http_response.body(), RANDOM_VALUE_WITH_TYPE_IMPLEMENTING_SERIALIZABLE);
 }

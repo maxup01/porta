@@ -63,7 +63,7 @@ pub struct HttpResponse<T>
 where 
     T: Serialize + for<'de> Deserialize<'de>
 {
-    value: T,
+    body: T,
     status: HttpStatus
 }
 
@@ -71,15 +71,15 @@ impl<T> HttpResponse<T>
 where 
     T: Serialize + for<'de> Deserialize<'de>
 {
-    pub fn new(value: T, status: HttpStatus) -> HttpResponse<T> {
+    pub fn new(body: T, status: HttpStatus) -> HttpResponse<T> {
         HttpResponse {
-            value,
+            body,
             status
         }
     }
 
-    pub fn value(self) -> T {
-        self.value
+    pub fn body(self) -> T {
+        self.body
     }
 
     pub fn status(&self) -> HttpStatus {
@@ -93,7 +93,7 @@ where
 {
 
     let status = response.status();
-    let value = response.value();
+    let value = response.body();
     let serialized_value = serde_json::to_string(&value)
             .expect("Failed to serialize response to JSON");
     let now = Utc::now();
