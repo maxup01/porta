@@ -236,9 +236,11 @@ pub fn delete(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> 
 
         #fn_vis fn #fn_name(request: &str) -> String {
 
-            let path_params = ::utils::request::path_param::extract_path_params(#path, request);
+            let path_from_request = &utils::request::route::extract_path_from_request(request).unwrap();
+            let path_params = ::utils::request::path_param::extract_path_params(
+                #path, path_from_request.as_str());
             let mut map_with_params = 
-                ::utils::request::query::extract_params(&::utils::request::route::extract_path_from_request(request).unwrap());
+                ::utils::request::query::extract_params(path_from_request.as_str());
             map_with_params.extend(path_params);
 
             #( #deserialized_args )*
@@ -296,30 +298,35 @@ pub fn post(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pr
 
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
-    let mut deserialized_args = vec![];
+    let deserialized_args = generate_deserialization_block_for_params(&fn_args);
+    let mut not_path_param: String = String::new();
+    let path_params = utils::request::path_param::extract_path_param_names_from_path(&path);
 
-    deserialized_args.push(generate_deserialization_block_for_request_body(fn_args.get(0).unwrap()));
+    for (arg_name, _) in &fn_args {
+        if !path_params.contains(&arg_name.to_string()) {
+            not_path_param = arg_name.to_string();
+            break;
+        }
+    }
 
     let expanded = quote! {
-        use utils::request::route::{register_route, Method};
-        use utils::response::http_response::format_response;
-        use utils::request::request_body::extract_request_body;
-        use utils::request::path_param::extract_path_params;
-        use serde_json;
 
         #fn_vis fn #fn_name(request: &str) -> String {
 
-            let request_body = &extract_request_body(request).unwrap_or_else(|| panic!("Failed to extract request body"));
+            let path_from_request = utils::request::route::extract_path_from_request(request).unwrap();
+            let mut map_with_params = ::utils::request::path_param::extract_path_params(#path, path_from_request.as_str());
+            map_with_params.insert(#not_path_param.to_string(),
+                ::utils::request::request_body::extract_request_body(request).unwrap().to_string());
 
             #( #deserialized_args )*
 
             let fn_result = (|| #fn_block )();
-            format_response(fn_result)
+            ::utils::response::http_response::format_response(fn_result)
         }
         
         #[ctor::ctor]
         fn #register_fn_name() {
-            register_route(Method::POST, #path, #fn_name);
+            ::utils::request::route::register_route(::utils::request::route::Method::POST, #path, #fn_name);
         }   
     };
 
