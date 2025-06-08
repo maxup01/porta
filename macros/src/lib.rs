@@ -171,7 +171,7 @@ pub fn get(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pro
         #fn_vis fn #fn_name(request: &str) -> String {
 
             let path_from_request = &utils::request::route::extract_path_from_request(request).unwrap();
-            let path_params = ::utils::request::path_param::extract_path_params(#path, request);
+            let path_params = ::utils::request::path_param::extract_path_params(#path, path_from_request);
             let mut map_with_params = ::utils::request::query::extract_params(path_from_request);
             map_with_params.extend(path_params);
 
@@ -233,27 +233,23 @@ pub fn delete(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> 
     let deserialized_args = generate_deserialization_block_for_params(&fn_args);
 
     let expanded = quote! {
-        use utils::request::route::{register_route, extract_path_from_request, Method};
-        use utils::response::http_response::format_response;
-        use utils::request::query::extract_params;
-        use utils::request::path_param::extract_path_params;
-        use serde_json;
 
         #fn_vis fn #fn_name(request: &str) -> String {
 
-            let path_params = extract_path_params(#path, request);
-            let mut map_with_params = extract_params(&extract_path_from_request(request).unwrap());
+            let path_params = ::utils::request::path_param::extract_path_params(#path, request);
+            let mut map_with_params = 
+                ::utils::request::query::extract_params(&::utils::request::route::extract_path_from_request(request).unwrap());
             map_with_params.extend(path_params);
 
             #( #deserialized_args )*
 
             let fn_result = (|| #fn_block )();
-            format_response(fn_result)
+            ::utils::response::http_response::format_response(fn_result)
         }
         
         #[ctor::ctor]
         fn #register_fn_name() {
-            register_route(Method::DELETE, #path, #fn_name);
+            ::utils::request::route::register_route(::utils::request::route::Method::DELETE, #path, #fn_name);
         }   
     };
 
