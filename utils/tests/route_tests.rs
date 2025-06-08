@@ -1,4 +1,5 @@
-use utils::request::route::{Method, get_route_function, register_route, extract_path_from_request, is_path_matching_route_path};
+use utils::request::route::{Method, get_route_function, register_route, extract_path_from_request,
+     is_path_matching_route_path, get_matching_route_path};
 
 const PATH_FOR_GET_METHOD: &str = "/get-mapping";
 const PATH_FOR_POST_METHOD: &str = "/post-mapping";
@@ -8,6 +9,14 @@ const PATH_THAT_NOT_EXIST: &str = "/mapping-that-not-exists";
 const REQUEST_WITH_PATH: &str = "GET /mapping/some";
 const PATH: &str = "/mapping/some";
 const RANDOM_STR_WITHOUT_SPACE: &str = "hbdabhiafhahifinhafnih";
+
+const USER_ROUTE: &str = "/user/{id}";
+const COMMENT_ROUTE: &str = "/post/{post_id}/comment/{comment_id}";
+const ABOUT_ROUTE: &str = "/about";
+const USER_PATH: &str = "/user/42";
+const COMMENT_PATH: &str = "/post/1/comment/2";
+const ABOUT_PATH: &str = "/about";
+const NOT_FOUND_PATH: &str = "/notfound";
 
 #[test]
 pub fn test_method_from_str() {
@@ -57,6 +66,7 @@ pub fn test_register_and_get_route() {
 
     let func_opt = get_route_function(PATH_THAT_NOT_EXIST, Method::DELETE);
     assert!(func_opt.is_none());
+
 }
 
 #[test]
@@ -80,4 +90,19 @@ pub fn is_path_matching_route_path_test() {
     assert!(is_path_matching_route_path(route_path, path));
     assert!(!is_path_matching_route_path(route_path, not_matching_path));
     assert!(!is_path_matching_route_path(route_path, second_not_matching_path));
+}
+
+#[test]
+pub fn test_get_matching_route_path() {
+
+    let dummy_handler = |param: &str| {param.to_string()};
+
+    register_route(Method::GET, USER_ROUTE, dummy_handler);
+    register_route(Method::GET, COMMENT_ROUTE, dummy_handler);
+    register_route(Method::GET, ABOUT_ROUTE, dummy_handler);
+
+    assert_eq!(get_matching_route_path(USER_PATH).unwrap(), USER_ROUTE.to_string());
+    assert_eq!(get_matching_route_path(COMMENT_PATH).unwrap(), COMMENT_ROUTE.to_string());
+    assert_eq!(get_matching_route_path(ABOUT_PATH).unwrap(), ABOUT_ROUTE.to_string());
+    assert_eq!(get_matching_route_path(NOT_FOUND_PATH), None);
 }

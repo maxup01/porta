@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, LazyLock};
+use std::vec::Vec;
 
 static GET_ROUTES: LazyLock<Mutex<HashMap<String, fn(&str) -> String>>> = LazyLock::new(|| {
     let m = HashMap::new();
@@ -18,6 +19,11 @@ static PATCH_ROUTES: LazyLock<Mutex<HashMap<String, fn(&str) -> String>>> = Lazy
 
 static DELETE_ROUTES: LazyLock<Mutex<HashMap<String, fn(&str) -> String>>> = LazyLock::new(|| {
     let m = HashMap::new();
+    Mutex::new(m)
+});
+
+static PATHS: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| {
+    let m = Vec::new();
     Mutex::new(m)
 });
 
@@ -78,6 +84,8 @@ pub fn register_route(method: Method, path: &str, function: fn(&str) -> String) 
         }
     };
 
+    PATHS.lock().unwrap().push(path.to_string());
+
     map_with_routes.insert(path.to_string(), function);
 }
 
@@ -109,4 +117,14 @@ pub fn is_path_matching_route_path(route_path: &str, path: &str) -> bool {
     }
 
     true
+}
+
+pub fn get_matching_route_path(path: &str) -> Option<String> {
+    let paths = PATHS.lock().unwrap();
+    for route_path in paths.iter() {
+        if is_path_matching_route_path(route_path, path) {
+            return Some(route_path.clone());
+        }
+    }
+    None
 }
