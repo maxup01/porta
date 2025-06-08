@@ -1,7 +1,8 @@
 extern crate proc_macro;
 
 use proc_macro2::TokenStream;
-use syn::{parse_macro_input, AttributeArgs, ItemFn, NestedMeta, Meta, FnArg, PatType, Pat};
+use syn::{parse_macro_input, AttributeArgs, ItemFn, NestedMeta, Meta,
+     FnArg, PatType, Pat, Lit};
 use quote::{quote, format_ident};
 use std::vec::Vec;
 
@@ -352,6 +353,93 @@ pub fn patch(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> p
         fn #register_fn_name() {
             ::utils::request::route::register_route(::utils::request::route::Method::PATCH, #path, #fn_name);
         }   
+    };
+
+    expanded.into()
+}
+
+#[proc_macro_attribute]
+pub fn unsecure_http_server(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let args = parse_macro_input!(attr as AttributeArgs);
+    let input_fn = parse_macro_input!(item as ItemFn);
+    let sig = &input_fn.sig;
+
+    if sig.ident != "main" {
+        panic!("The unsecure_http_server macro can only be applied to the main function.");
+    }
+
+    let mut ip_lit = None;
+    let mut port_lit = None;
+
+    for arg in args.iter() {
+        if let NestedMeta::Meta(meta) = arg {
+            match meta {
+                Meta::NameValue(nv) => {
+                    if nv.path.get_ident().unwrap() == "ip" {
+                        if let Lit::Str(lit_str) = &nv.lit {
+                            ip_lit = Some(lit_str.value());
+                        }
+                    }
+                    else if nv.path.get_ident().unwrap() == "port" {
+                        if let Lit::Int(lit_int) = &nv.lit {
+                            port_lit = Some(lit_int.base10_parse::<u16>().unwrap());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let ip_str = ip_lit.unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = port_lit.unwrap_or(8080);
+
+    let expanded = quote! {
+        use std::net::SocketAddr;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        #[tokio::main]
+        #sig {
+            let addr = format!("{}:{}", #ip_str, #port);
+            let listener = ::tokio::net::TcpListener::bind(&addr).await.expect("Failed to bind address");
+
+            loop {
+                let (mut socket, _) = listener.accept().await.expect("Failed to accept connection");
+                tokio::spawn(async move {
+                    let mut buffer = [0u8; 4096];
+                    let n = match socket.read(&mut buffer).await {
+                        Ok(n) if n == 0 => return,
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+
+                    let request = String::from_utf8_lossy(&buffer[..n]).to_string();
+                    let path = ::utils::request::route::extract_path_from_request(&request).unwrap_or_default();
+
+                    let route_path = ::utils::request::route::get_matching_route_path(&path);
+
+                    let mut response = format!(
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Not Found".len(),
+                        "Not Found"
+                    ); 
+
+                    if let Some(route_path) = route_path {
+                        match ::utils::request::route::get_route_function(
+                            &route_path, ::utils::request::route::extract_method_from_request(&request)
+                            .unwrap_or(::utils::request::route::Method::GET)) {
+                            Some(route_function) => {
+                                response = route_function(&request);
+                            }
+                            None => {}
+                        }
+                    }
+
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        }
     };
 
     expanded.into()
