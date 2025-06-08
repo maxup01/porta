@@ -128,3 +128,8 @@ pub fn get_matching_route_path(path: &str) -> Option<String> {
     }
     None
 }
+
+pub fn extract_method_from_request(request: &str) -> Option<Method> {
+    let method = request.split_whitespace().next()?;
+    Method::from_str(method)
+}

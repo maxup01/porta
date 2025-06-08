@@ -1,5 +1,5 @@
 use utils::request::route::{Method, get_route_function, register_route, extract_path_from_request,
-     is_path_matching_route_path, get_matching_route_path};
+     is_path_matching_route_path, get_matching_route_path, extract_method_from_request};
 
 const PATH_FOR_GET_METHOD: &str = "/get-mapping";
 const PATH_FOR_POST_METHOD: &str = "/post-mapping";
@@ -17,6 +17,13 @@ const USER_PATH: &str = "/user/42";
 const COMMENT_PATH: &str = "/post/1/comment/2";
 const ABOUT_PATH: &str = "/about";
 const NOT_FOUND_PATH: &str = "/notfound";
+
+const GET_REQ: &str = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+const POST_REQ: &str = "POST /submit HTTP/1.1\r\nHost: localhost\r\n\r\n";
+const PATCH_REQ: &str = "PATCH /item/1 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+const DELETE_REQ: &str = "DELETE /item/1 HTTP/1.1\r\nHost: localhost\r\n\r\n";
+const INVALID_REQ: &str = "FOO / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+const EMPTY_REQ: &str = "";
 
 #[test]
 pub fn test_method_from_str() {
@@ -105,4 +112,14 @@ pub fn test_get_matching_route_path() {
     assert_eq!(get_matching_route_path(COMMENT_PATH).unwrap(), COMMENT_ROUTE.to_string());
     assert_eq!(get_matching_route_path(ABOUT_PATH).unwrap(), ABOUT_ROUTE.to_string());
     assert_eq!(get_matching_route_path(NOT_FOUND_PATH), None);
+}
+
+#[test]
+fn test_extract_method_from_request() {
+    assert!(extract_method_from_request(GET_REQ).is_some());
+    assert_eq!(extract_method_from_request(POST_REQ), Some(Method::POST));
+    assert_eq!(extract_method_from_request(PATCH_REQ), Some(Method::PATCH));
+    assert_eq!(extract_method_from_request(DELETE_REQ), Some(Method::DELETE));
+    assert!(extract_method_from_request(INVALID_REQ).is_none());
+    assert!(extract_method_from_request(EMPTY_REQ).is_none());
 }
