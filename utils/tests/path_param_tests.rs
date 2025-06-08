@@ -31,7 +31,7 @@ pub fn should_extract_path_param_values_from_path_that_has_params() {
 
     let path_params = extract_path_params(PATH_WITH_SOME_PATH_PARAMS, PATH_WITH_SOME_PATH_PARAMS_FIELD_WITH_VALUES);
     assert_eq!(path_params.len(), 2);
-    assert_eq!(path_params.get("userId").unwrap().as_str(), "\"10\"");
-    assert_eq!(path_params.get("postId").unwrap().as_str(), "\"70\"");
+    assert_eq!(path_params.get("userId").unwrap().as_str(), "10");
+    assert_eq!(path_params.get("postId").unwrap().as_str(), "70");
 }
 
