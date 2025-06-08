@@ -5,6 +5,19 @@ use syn::{parse_macro_input, AttributeArgs, ItemFn, NestedMeta, Meta, FnArg, Pat
 use quote::{quote, format_ident};
 use std::vec::Vec;
 
+#[proc_macro]
+pub fn inject_common_imports(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let expanded: TokenStream = quote! {
+        use utils::request::route::{register_route, extract_path_from_request, Method};
+        use utils::response::http_response::format_response;
+        use utils::request::query::extract_params;
+        use utils::request::path_param::extract_path_params;
+        use serde_json;
+    };
+
+    expanded.into()
+}
+
 fn generate_deserialization_block_for_params(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec<TokenStream> {
     let mut deserialized = vec![];
 
@@ -51,7 +64,7 @@ fn generate_deserialization_block_for_params(fn_args: &Vec<(syn::Ident, syn::Typ
                     param_val = param_val_orig;
                 }
 
-                let #arg_name: #arg_type = serde_json::from_str(param_val)
+                let #arg_name: #arg_type = ::serde_json::from_str(param_val)
                     .expect(&format!("Failed to deserialize argument {}", #arg_str));
             });
         }
@@ -69,8 +82,7 @@ fn generate_deserialization_block_for_request_body(arg: &(syn::Ident, syn::Type)
 
     if ty_str == "u8" || ty_str == "u16" || ty_str == "u32" || ty_str == "u64" || ty_str == "usize"
         || ty_str == "i8" || ty_str == "i16" || ty_str == "i32" || ty_str == "i64" || ty_str == "isize"
-        || ty_str == "f32" || ty_str == "f64"
-    {
+        || ty_str == "f32" || ty_str == "f64" {
         quote! {
             let param_val_orig = request_body;
             let #arg_name: #arg_type = param_val_orig.parse()
@@ -155,24 +167,23 @@ pub fn get(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pro
     let deserialized_args = generate_deserialization_block_for_params(&fn_args);
 
     let expanded = quote! {
-        use utils::request::route::{register_route, extract_path_from_request, Method};
-        use utils::response::http_response::format_response;
-        use utils::request::query::extract_params;
-        use serde_json;
 
         #fn_vis fn #fn_name(request: &str) -> String {
 
-            let map_with_params = extract_params(&extract_path_from_request(request).unwrap());
+            let path_from_request = &utils::request::route::extract_path_from_request(request).unwrap();
+            let path_params = ::utils::request::path_param::extract_path_params(#path, request);
+            let mut map_with_params = ::utils::request::query::extract_params(path_from_request);
+            map_with_params.extend(path_params);
 
             #( #deserialized_args )*
 
             let fn_result = (|| #fn_block )();
-            format_response(fn_result)
+            ::utils::response::http_response::format_response(fn_result)
         }
         
         #[ctor::ctor]
         fn #register_fn_name() {
-            register_route(Method::GET, #path, #fn_name);
+            ::utils::request::route::register_route(::utils::request::route::Method::GET, #path, #fn_name);
         }   
     };
 
@@ -225,11 +236,14 @@ pub fn delete(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> 
         use utils::request::route::{register_route, extract_path_from_request, Method};
         use utils::response::http_response::format_response;
         use utils::request::query::extract_params;
+        use utils::request::path_param::extract_path_params;
         use serde_json;
 
         #fn_vis fn #fn_name(request: &str) -> String {
 
-            let map_with_params = extract_params(&extract_path_from_request(request).unwrap());
+            let path_params = extract_path_params(#path, request);
+            let mut map_with_params = extract_params(&extract_path_from_request(request).unwrap());
+            map_with_params.extend(path_params);
 
             #( #deserialized_args )*
 
@@ -294,6 +308,7 @@ pub fn post(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pr
         use utils::request::route::{register_route, Method};
         use utils::response::http_response::format_response;
         use utils::request::request_body::extract_request_body;
+        use utils::request::path_param::extract_path_params;
         use serde_json;
 
         #fn_vis fn #fn_name(request: &str) -> String {

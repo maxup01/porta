@@ -18,15 +18,8 @@ pub fn extract_path_params(route_path: &str, path: &str) -> HashMap<String, Stri
             continue;
         }
         else if route_path_part != path_part {
-            if path_part.starts_with("{") && path_part.ends_with("}") {
-                param_values_as_json.insert(
-                    (route_path_part[1..route_path_part.len() - 1]).to_string(),
+            param_values_as_json.insert((route_path_part[1..route_path_part.len() - 1]).to_string(),
                      (&path_part[0..path_part.len()]).to_string());
-            } else {
-                param_values_as_json.insert(
-                    route_path_part[1..route_path_part.len() - 1].to_string(),
-                     format!("\"{}\"", (&path_part[0..path_part.len()])));
-            }
         }
     }
 
