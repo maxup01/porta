@@ -319,7 +319,7 @@ pub fn patch(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> p
             }
         }
     }
-
+    
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
     let deserialized_args = generate_deserialization_block_for_params(&fn_args);
@@ -356,3 +356,4 @@ pub fn patch(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> p
 
     expanded.into()
 }
+
