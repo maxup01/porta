@@ -73,57 +73,6 @@ fn generate_deserialization_block_for_params(fn_args: &Vec<(syn::Ident, syn::Typ
     deserialized
 }
 
-fn generate_deserialization_block_for_request_body(arg: &(syn::Ident, syn::Type)) -> TokenStream {
-
-    let(arg_name, arg_type) = arg;
-
-    let arg_str = arg_name.to_string();
-    let ty_str = quote!(#arg_type).to_string();
-
-    if ty_str == "u8" || ty_str == "u16" || ty_str == "u32" || ty_str == "u64" || ty_str == "usize"
-        || ty_str == "i8" || ty_str == "i16" || ty_str == "i32" || ty_str == "i64" || ty_str == "isize"
-        || ty_str == "f32" || ty_str == "f64" {
-        quote! {
-            let param_val_orig = request_body;
-            let #arg_name: #arg_type = param_val_orig.parse()
-                .expect(&format!("Failed to parse argument {} as {}", #arg_str, #ty_str));
-        }
-    }
-    else if ty_str == "bool" {
-        quote! {
-            let param_val_orig = request_body;
-            let #arg_name: #arg_type = match param_val_orig {
-                "true" | "1" => true,
-                "false" | "0" => false,
-                _ => panic!("Failed to parse argument {} as bool", #arg_str),
-            };
-        }
-    }
-    else if ty_str == "String" {
-        quote! {
-            let param_val_orig = request_body;
-            let #arg_name: #arg_type = param_val_orig.to_string();
-        }
-    }
-    else {
-        quote! {
-            let param_val_orig = request_body;
-            let param_val: &str;
-            let formatted;
-
-            if !(param_val_orig.starts_with("{") && param_val_orig.ends_with("}")) {
-                formatted = format!("\"{}\"", param_val_orig);
-                param_val = &formatted;
-            } else {
-                param_val = param_val_orig;
-            }
-
-            let #arg_name: #arg_type = serde_json::from_str(param_val)
-                .expect(&format!("Failed to deserialize argument {}", #arg_str));
-        }
-    }
-}
-
 #[proc_macro_attribute]
 pub fn get(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let args = parse_macro_input!(args as AttributeArgs);
@@ -236,7 +185,7 @@ pub fn delete(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> 
 
         #fn_vis fn #fn_name(request: &str) -> String {
 
-            let path_from_request = &utils::request::route::extract_path_from_request(request).unwrap();
+            let path_from_request = &::utils::request::route::extract_path_from_request(request).unwrap();
             let path_params = ::utils::request::path_param::extract_path_params(
                 #path, path_from_request.as_str());
             let mut map_with_params = 
@@ -300,7 +249,7 @@ pub fn post(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pr
 
     let deserialized_args = generate_deserialization_block_for_params(&fn_args);
     let mut not_path_param: String = String::new();
-    let path_params = utils::request::path_param::extract_path_param_names_from_path(&path);
+    let path_params = ::utils::request::path_param::extract_path_param_names_from_path(&path);
 
     for (arg_name, _) in &fn_args {
         if !path_params.contains(&arg_name.to_string()) {
@@ -313,7 +262,7 @@ pub fn post(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pr
 
         #fn_vis fn #fn_name(request: &str) -> String {
 
-            let path_from_request = utils::request::route::extract_path_from_request(request).unwrap();
+            let path_from_request = ::utils::request::route::extract_path_from_request(request).unwrap();
             let mut map_with_params = ::utils::request::path_param::extract_path_params(#path, path_from_request.as_str());
             map_with_params.insert(#not_path_param.to_string(),
                 ::utils::request::request_body::extract_request_body(request).unwrap().to_string());
@@ -373,29 +322,35 @@ pub fn patch(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> p
 
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
-    let mut deserialized_args = vec![];
+    let deserialized_args = generate_deserialization_block_for_params(&fn_args);
+    let mut not_path_param: String = String::new();
+    let path_params = ::utils::request::path_param::extract_path_param_names_from_path(&path);
 
-    deserialized_args.push(generate_deserialization_block_for_request_body(fn_args.get(0).unwrap()));
+    for (arg_name, _) in &fn_args {
+        if !path_params.contains(&arg_name.to_string()) {
+            not_path_param = arg_name.to_string();
+            break;
+        }
+    }
 
     let expanded = quote! {
-        use utils::request::route::{register_route, Method};
-        use utils::response::http_response::format_response;
-        use utils::request::request_body::extract_request_body;
-        use serde_json;
 
         #fn_vis fn #fn_name(request: &str) -> String {
 
-            let request_body = &extract_request_body(request).unwrap_or_else(|| panic!("Failed to extract request body"));
+            let path_from_request = ::utils::request::route::extract_path_from_request(request).unwrap();
+            let mut map_with_params = ::utils::request::path_param::extract_path_params(#path, path_from_request.as_str());
+            map_with_params.insert(#not_path_param.to_string(),
+                ::utils::request::request_body::extract_request_body(request).unwrap().to_string());
 
             #( #deserialized_args )*
 
             let fn_result = (|| #fn_block )();
-            format_response(fn_result)
+            ::utils::response::http_response::format_response(fn_result)
         }
         
         #[ctor::ctor]
         fn #register_fn_name() {
-            register_route(Method::PATCH, #path, #fn_name);
+            ::utils::request::route::register_route(::utils::request::route::Method::PATCH, #path, #fn_name);
         }   
     };
 
