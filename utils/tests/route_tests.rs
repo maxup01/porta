@@ -10,6 +10,21 @@ const PATH: &str = "/mapping/some";
 const RANDOM_STR_WITHOUT_SPACE: &str = "hbdabhiafhahifinhafnih";
 
 #[test]
+pub fn test_method_from_str() {
+    let get_method = Method::from_str("GET");
+    let post_method = Method::from_str("POST");
+    let patch_method = Method::from_str("PATCH");
+    let delete_method = Method::from_str("DELETE");
+    let not_existing_method = Method::from_str("NOT_EXISTING");
+
+    assert!(get_method.is_some());
+    assert!(post_method.is_some());
+    assert!(patch_method.is_some());
+    assert!(delete_method.is_some());
+    assert!(not_existing_method.is_none());
+}
+
+#[test]
 pub fn test_register_and_get_route() {
 
     let random_function = |param: &str| {param.to_string()};

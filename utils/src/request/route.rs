@@ -28,6 +28,18 @@ pub enum Method {
     DELETE
 }
 
+impl Method {
+    pub fn from_str(method: &str) -> Option<Method> {
+        match method.to_uppercase().as_str() {
+            "GET" => Some(Method::GET),
+            "POST" => Some(Method::POST),
+            "PATCH" => Some(Method::PATCH),
+            "DELETE" => Some(Method::DELETE),
+            _ => None,
+        }
+    }
+}
+
 pub fn get_route_function(request: &str, method: Method) -> Option<fn(&str) -> String> {
     let path = request.splitn(2, '?').next().unwrap();
 
