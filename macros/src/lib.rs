@@ -13,13 +13,13 @@ pub fn inject_common_imports(_input: proc_macro::TokenStream) -> proc_macro::Tok
         use utils::response::http_response::format_response;
         use utils::request::query::extract_params;
         use utils::request::path_param::extract_path_params;
-        use serde_json;
+        use serde_json::{Value};
     };
 
     expanded.into()
 }
 
-fn generate_deserialization_block_for_params(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec<TokenStream> {
+fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec<TokenStream> {
     let mut deserialized = vec![];
 
     for (arg_name, arg_type) in fn_args {
@@ -32,8 +32,15 @@ fn generate_deserialization_block_for_params(fn_args: &Vec<(syn::Ident, syn::Typ
         {
             deserialized.push(quote! {
                 let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
-                let #arg_name: #arg_type = param_val_orig.parse()
-                    .expect(&format!("Failed to parse argument {} as {}", #arg_str, #ty_str));
+                let #arg_name: #arg_type = match param_val_orig.parse() {
+                    Ok(val) => val,
+                    Err(_) => {
+                        return format!(
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Not Found".len(),
+                        "Not Found"
+                    )}
+                };
             });
         }
         else if ty_str == "bool" {
@@ -42,7 +49,12 @@ fn generate_deserialization_block_for_params(fn_args: &Vec<(syn::Ident, syn::Typ
                 let #arg_name: #arg_type = match param_val_orig {
                     "true" | "1" => true,
                     "false" | "0" => false,
-                    _ => panic!("Failed to parse argument {} as bool", #arg_str),
+                    _ => {
+                        return format!(
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Not Found".len(),
+                        "Not Found"
+                    )}
                 };
             });
         }
@@ -65,8 +77,15 @@ fn generate_deserialization_block_for_params(fn_args: &Vec<(syn::Ident, syn::Typ
                     param_val = param_val_orig;
                 }
 
-                let #arg_name: #arg_type = ::serde_json::from_str(param_val)
-                    .expect(&format!("Failed to deserialize argument {}", #arg_str));
+                let #arg_name: #arg_type = match ::serde_json::from_str(param_val) {
+                    Ok(val) => val,
+                    Err(_) => {
+                        return format!(
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Not Found".len(),
+                        "Not Found"
+                    )}
+                };
             });
         }
     }
@@ -114,7 +133,7 @@ pub fn get(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pro
 
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
-    let deserialized_args = generate_deserialization_block_for_params(&fn_args);
+    let deserialized_args = generate_deserialization_block(&fn_args);
 
     let expanded = quote! {
 
@@ -180,7 +199,7 @@ pub fn delete(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> 
 
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
-    let deserialized_args = generate_deserialization_block_for_params(&fn_args);
+    let deserialized_args = generate_deserialization_block(&fn_args);
 
     let expanded = quote! {
 
@@ -248,7 +267,7 @@ pub fn post(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pr
 
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
-    let deserialized_args = generate_deserialization_block_for_params(&fn_args);
+    let deserialized_args = generate_deserialization_block(&fn_args);
     let mut not_path_param: String = String::new();
     let path_params = ::utils::request::path_param::extract_path_param_names_from_path(&path);
 
@@ -323,7 +342,7 @@ pub fn patch(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> p
     
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
-    let deserialized_args = generate_deserialization_block_for_params(&fn_args);
+    let deserialized_args = generate_deserialization_block(&fn_args);
     let mut not_path_param: String = String::new();
     let path_params = ::utils::request::path_param::extract_path_param_names_from_path(&path);
 
@@ -444,4 +463,3 @@ pub fn unsecure_http_server(attr: proc_macro::TokenStream, item: proc_macro::Tok
 
     expanded.into()
 }
-
