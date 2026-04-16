@@ -1,10 +1,9 @@
 extern crate proc_macro;
 
 use proc_macro2::TokenStream;
-use syn::{parse_macro_input, AttributeArgs, ItemFn, NestedMeta, Meta,
-     FnArg, PatType, Pat, Lit};
-use quote::{quote, format_ident};
+use quote::{format_ident, quote};
 use std::vec::Vec;
+use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn, Lit, Meta, NestedMeta, Pat, PatType};
 
 #[proc_macro]
 pub fn inject_common_imports(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -26,9 +25,18 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
         let arg_str = arg_name.to_string();
         let ty_str = quote!(#arg_type).to_string();
 
-        if ty_str == "u8" || ty_str == "u16" || ty_str == "u32" || ty_str == "u64" || ty_str == "usize"
-            || ty_str == "i8" || ty_str == "i16" || ty_str == "i32" || ty_str == "i64" || ty_str == "isize"
-            || ty_str == "f32" || ty_str == "f64"
+        if ty_str == "u8"
+            || ty_str == "u16"
+            || ty_str == "u32"
+            || ty_str == "u64"
+            || ty_str == "usize"
+            || ty_str == "i8"
+            || ty_str == "i16"
+            || ty_str == "i32"
+            || ty_str == "i64"
+            || ty_str == "isize"
+            || ty_str == "f32"
+            || ty_str == "f64"
         {
             deserialized.push(quote! {
                 let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
@@ -42,8 +50,7 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                     )}
                 };
             });
-        }
-        else if ty_str == "bool" {
+        } else if ty_str == "bool" {
             deserialized.push(quote! {
                 let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
                 let #arg_name: #arg_type = match param_val_orig {
@@ -57,14 +64,12 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                     )}
                 };
             });
-        }
-        else if ty_str == "String" {
+        } else if ty_str == "String" {
             deserialized.push(quote! {
                 let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
                 let #arg_name: #arg_type = param_val_orig.to_string();
             });
-        }
-        else {
+        } else {
             deserialized.push(quote! {
                 let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
                 let param_val: &str;
@@ -94,7 +99,10 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
 }
 
 #[proc_macro_attribute]
-pub fn get(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn get(
+    args: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
@@ -118,7 +126,7 @@ pub fn get(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pro
         }
     }
 
-    let path= match path.unwrap() {
+    let path = match path.unwrap() {
         syn::Lit::Str(lit_str) => lit_str.value(),
         _ => panic!("Expected a string literal for path"),
     };
@@ -149,18 +157,21 @@ pub fn get(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pro
             let fn_result = (|| #fn_block )();
             ::utils::response::http_response::format_response(fn_result)
         }
-        
+
         #[ctor::ctor]
         fn #register_fn_name() {
             ::utils::request::route::register_route(::utils::request::route::Method::GET, #path, #fn_name);
-        }   
+        }
     };
 
     expanded.into()
 }
 
 #[proc_macro_attribute]
-pub fn delete(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn delete(
+    args: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
@@ -184,7 +195,7 @@ pub fn delete(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> 
         }
     }
 
-    let path= match path.unwrap() {
+    let path = match path.unwrap() {
         syn::Lit::Str(lit_str) => lit_str.value(),
         _ => panic!("Expected a string literal for path"),
     };
@@ -208,7 +219,7 @@ pub fn delete(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> 
             let path_from_request = &::utils::request::route::extract_path_from_request(request).unwrap();
             let path_params = ::utils::request::path_param::extract_path_params(
                 #path, path_from_request.as_str());
-            let mut map_with_params = 
+            let mut map_with_params =
                 ::utils::request::query::extract_params(path_from_request.as_str());
             map_with_params.extend(path_params);
 
@@ -217,18 +228,21 @@ pub fn delete(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> 
             let fn_result = (|| #fn_block )();
             ::utils::response::http_response::format_response(fn_result)
         }
-        
+
         #[ctor::ctor]
         fn #register_fn_name() {
             ::utils::request::route::register_route(::utils::request::route::Method::DELETE, #path, #fn_name);
-        }   
+        }
     };
 
     expanded.into()
 }
 
 #[proc_macro_attribute]
-pub fn post(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn post(
+    args: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
@@ -252,7 +266,7 @@ pub fn post(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pr
         }
     }
 
-    let path= match path.unwrap() {
+    let path = match path.unwrap() {
         syn::Lit::Str(lit_str) => lit_str.value(),
         _ => panic!("Expected a string literal for path"),
     };
@@ -269,10 +283,13 @@ pub fn post(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pr
 
     let deserialized_args = generate_deserialization_block(&fn_args);
     let mut not_path_param: String = String::new();
-    let path_params = ::utils::request::path_param::extract_path_param_names_from_path(&path);
+    let path_params: Vec<String> =
+        ::utils::request::path_param::extract_path_param_names_from_path(&path).collect();
 
     for (arg_name, _) in &fn_args {
-        if !path_params.contains(&arg_name.to_string()) {
+        let arg_name_str = arg_name.to_string();
+
+        if path_params.contains(&arg_name_str) {
             not_path_param = arg_name.to_string();
             break;
         }
@@ -292,18 +309,21 @@ pub fn post(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> pr
             let fn_result = (|| #fn_block )();
             ::utils::response::http_response::format_response(fn_result)
         }
-        
+
         #[ctor::ctor]
         fn #register_fn_name() {
             ::utils::request::route::register_route(::utils::request::route::Method::POST, #path, #fn_name);
-        }   
+        }
     };
 
     expanded.into()
 }
 
 #[proc_macro_attribute]
-pub fn patch(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn patch(
+    args: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
@@ -327,7 +347,7 @@ pub fn patch(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> p
         }
     }
 
-    let path= match path.unwrap() {
+    let path = match path.unwrap() {
         syn::Lit::Str(lit_str) => lit_str.value(),
         _ => panic!("Expected a string literal for path"),
     };
@@ -339,15 +359,18 @@ pub fn patch(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> p
             }
         }
     }
-    
+
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
     let deserialized_args = generate_deserialization_block(&fn_args);
     let mut not_path_param: String = String::new();
-    let path_params = ::utils::request::path_param::extract_path_param_names_from_path(&path);
+    let path_params: Vec<String> =
+        ::utils::request::path_param::extract_path_param_names_from_path(&path).collect();
 
     for (arg_name, _) in &fn_args {
-        if !path_params.contains(&arg_name.to_string()) {
+        let arg_name_str = arg_name.to_string();
+
+        if !path_params.contains(&arg_name_str) {
             not_path_param = arg_name.to_string();
             break;
         }
@@ -367,18 +390,21 @@ pub fn patch(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> p
             let fn_result = (|| #fn_block )();
             ::utils::response::http_response::format_response(fn_result)
         }
-        
+
         #[ctor::ctor]
         fn #register_fn_name() {
             ::utils::request::route::register_route(::utils::request::route::Method::PATCH, #path, #fn_name);
-        }   
+        }
     };
 
     expanded.into()
 }
 
 #[proc_macro_attribute]
-pub fn unsecure_http_server(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+pub fn unsecure_http_server(
+    attr: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     let args = parse_macro_input!(attr as AttributeArgs);
     let input_fn = parse_macro_input!(item as ItemFn);
     let sig = &input_fn.sig;
@@ -398,8 +424,7 @@ pub fn unsecure_http_server(attr: proc_macro::TokenStream, item: proc_macro::Tok
                         if let Lit::Str(lit_str) = &nv.lit {
                             ip_lit = Some(lit_str.value());
                         }
-                    }
-                    else if nv.path.get_ident().unwrap() == "port" {
+                    } else if nv.path.get_ident().unwrap() == "port" {
                         if let Lit::Int(lit_int) = &nv.lit {
                             port_lit = Some(lit_int.base10_parse::<u16>().unwrap());
                         }
@@ -442,7 +467,7 @@ pub fn unsecure_http_server(attr: proc_macro::TokenStream, item: proc_macro::Tok
                         "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
                         "Not Found".len(),
                         "Not Found"
-                    ); 
+                    );
 
                     if let Some(route_path) = route_path {
                         match ::utils::request::route::get_route_function(
