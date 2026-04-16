@@ -3,10 +3,13 @@ name = "rusws"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["macros", "error", "utils"]
+
 [dependencies]
-tokio = {version = "1", features = ["full"]}
-macros = {path = "./macros"}
-utils = {path = "./utils"}
+tokio = { version = "1", features = ["full"] }
+macros = { path = "./macros" }
+utils = { path = "./utils" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ctor = "0.1"
