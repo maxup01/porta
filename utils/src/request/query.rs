@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-/// Extracts query string parameters from an HTTP request line or URL.
+/// Extracts query string parameters from URL.
 ///
 /// Splits the input on the first `?`, then parses the query string into
 /// key-value pairs separated by `&`, with each pair split on the first `=`.
@@ -41,8 +41,8 @@ use std::collections::HashMap;
 ///
 /// - Values are taken verbatim; percent-decoding is left to the caller.
 /// - Duplicate keys are silently collapsed — the last occurrence wins.
-pub fn extract_params(request: &str) -> Option<HashMap<String, String>> {
-    match request.split_once('?') {
+pub fn extract_params(url: &str) -> Option<HashMap<String, String>> {
+    match url.split_once('?') {
         Some((_path, query)) => {
             let params = query
                 .split('&')
