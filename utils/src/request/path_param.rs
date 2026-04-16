@@ -18,6 +18,8 @@ use std::collections::HashMap;
 /// # Examples
 ///
 /// ```
+/// use utils::request::path_param::extract_path_param_names_from_path;
+///
 /// let names: Vec<String> = extract_path_param_names_from_path("/users/{id}/posts/{post_id}").collect();
 /// assert_eq!(names, vec!["id", "post_id"]);
 ///
@@ -62,12 +64,14 @@ pub fn extract_path_param_names_from_path(path: &str) -> impl Iterator<Item = St
 /// # Examples
 ///
 /// ```
-/// let params = extract_path_params("/users/{id}/posts/{post_id}", "/users/42/posts/7")?;
+/// use utils::request::path_param::extract_path_params;
+///
+/// let params = extract_path_params("/users/{id}/posts/{post_id}", "/users/42/posts/7").unwrap();
 /// assert_eq!(params["id"], "42");
 /// assert_eq!(params["post_id"], "7");
 ///
 /// // Static segments are ignored
-/// let params = extract_path_params("/users/all", "/users/all")?;
+/// let params = extract_path_params("/users/all", "/users/all").unwrap();
 /// assert!(params.is_empty());
 ///
 /// // Mismatched segment counts return an error
