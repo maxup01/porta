@@ -148,7 +148,8 @@ pub fn get(
         #fn_vis fn #fn_name(request: &str) -> String {
 
             let path_from_request = &utils::request::route::extract_path_from_request(request).unwrap();
-            let path_params = ::utils::request::path_param::extract_path_params(#path, path_from_request);
+            let path_params = ::utils::request::path_param::extract_path_params(#path, path_from_request).unwrap();
+
             let mut map_with_params = ::utils::request::query::extract_params(path_from_request);
             map_with_params.extend(path_params);
 
@@ -218,7 +219,8 @@ pub fn delete(
 
             let path_from_request = &::utils::request::route::extract_path_from_request(request).unwrap();
             let path_params = ::utils::request::path_param::extract_path_params(
-                #path, path_from_request.as_str());
+                #path, path_from_request.as_str()
+            ).unwrap();
             let mut map_with_params =
                 ::utils::request::query::extract_params(path_from_request.as_str());
             map_with_params.extend(path_params);
@@ -300,7 +302,9 @@ pub fn post(
         #fn_vis fn #fn_name(request: &str) -> String {
 
             let path_from_request = ::utils::request::route::extract_path_from_request(request).unwrap();
-            let mut map_with_params = ::utils::request::path_param::extract_path_params(#path, path_from_request.as_str());
+            let mut map_with_params = ::utils::request::path_param::extract_path_params(
+                #path, path_from_request.as_str()
+            ).unwrap();
             map_with_params.insert(#not_path_param.to_string(),
                 ::utils::request::request_body::extract_request_body(request).unwrap().to_string());
 
@@ -381,7 +385,9 @@ pub fn patch(
         #fn_vis fn #fn_name(request: &str) -> String {
 
             let path_from_request = ::utils::request::route::extract_path_from_request(request).unwrap();
-            let mut map_with_params = ::utils::request::path_param::extract_path_params(#path, path_from_request.as_str());
+            let mut map_with_params = ::utils::request::path_param::extract_path_params(
+                #path, path_from_request.as_str()
+            ).unwrap();
             map_with_params.insert(#not_path_param.to_string(),
                 ::utils::request::request_body::extract_request_body(request).unwrap().to_string());
 
