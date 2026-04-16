@@ -8,8 +8,8 @@ use std::collections::HashMap;
 ///
 /// # Arguments
 ///
-/// * `request` - A raw HTTP request line or URL string, e.g.
-///   `"GET /search?q=rust&page=2 HTTP/1.1"` or `"/search?q=rust&page=2"`
+/// * `request` - A URL string.
+///   `"/search?q=rust&page=2"`
 ///
 /// # Returns
 ///
@@ -62,3 +62,7 @@ pub fn extract_params(request: &str) -> Option<HashMap<String, String>> {
         None => None,
     }
 }
+
+#[cfg(test)]
+#[path = "query_tests.rs"]
+mod tests;
