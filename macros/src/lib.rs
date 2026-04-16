@@ -150,7 +150,7 @@ pub fn get(
             let path_from_request = &utils::request::route::extract_path_from_request(request).unwrap();
             let path_params = ::utils::request::path_param::extract_path_params(#path, path_from_request).unwrap();
 
-            let mut map_with_params = ::utils::request::query::extract_params(path_from_request);
+            let mut map_with_params = ::utils::request::query::extract_params(path_from_request).unwrap();
             map_with_params.extend(path_params);
 
             #( #deserialized_args )*
@@ -222,7 +222,7 @@ pub fn delete(
                 #path, path_from_request.as_str()
             ).unwrap();
             let mut map_with_params =
-                ::utils::request::query::extract_params(path_from_request.as_str());
+                ::utils::request::query::extract_params(path_from_request.as_str()).unwrap();
             map_with_params.extend(path_params);
 
             #( #deserialized_args )*
