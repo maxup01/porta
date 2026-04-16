@@ -36,7 +36,7 @@
 /// assert!(no_sep.is_none());
 /// ```
 pub fn extract_request_body(request: &str) -> Option<String> {
-    let crlf_start_idx = request.find("\r\n\r\n")?; // + 4
+    let crlf_start_idx = request.find("\r\n\r\n")?;
     let request_after_crlf = &request[crlf_start_idx..];
 
     if request_after_crlf.len() == 4 {
@@ -47,3 +47,7 @@ pub fn extract_request_body(request: &str) -> Option<String> {
 
     Some(request[body_start_idx..].to_string())
 }
+
+#[cfg(test)]
+#[path = "request_body_tests.rs"]
+mod tests;
