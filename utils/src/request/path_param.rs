@@ -1,5 +1,29 @@
 use std::{collections::HashMap, str::Split};
 
+/// Extracts path parameter names from a URL path template.
+///
+/// Parses a path string and yields the names of all path parameters,
+/// which are segments enclosed in curly braces (e.g. `{id}`).
+///
+/// # Arguments
+///
+/// * `path` - A URL path template string, e.g. `"/users/{id}/posts/{post_id}"`
+///
+/// # Returns
+///
+/// An iterator over [`String`]s, each being a parameter name with the
+/// surrounding braces stripped.
+///
+/// # Examples
+///
+/// ```
+/// let names: Vec<String> = extract_path_param_names_from_path("/users/{id}/posts/{post_id}").collect();
+/// assert_eq!(names, vec!["id", "post_id"]);
+///
+/// // Returns an empty iterator if no parameters are present
+/// let empty: Vec<String> = extract_path_param_names_from_path("/users/all").collect();
+/// assert!(empty.is_empty());
+/// ```
 pub fn extract_path_param_names_from_path(path: &str) -> impl Iterator<Item = String> {
     path.split('/').filter_map(|s| {
         if s.starts_with('{') && s.ends_with('}') {
