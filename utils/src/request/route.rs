@@ -8,26 +8,36 @@ use std::{
 
 type RouteHandler = fn(&str) -> String;
 
+/// Lazily initialized, thread-safe map of GET route paths to their handler functions.
+/// Populated at startup via route registration and consulted on each incoming GET request.
 static GET_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
     let m: HashMap<String, fn(&str) -> String> = HashMap::new();
     Mutex::new(m)
 });
 
+/// Lazily initialized, thread-safe map of POST route paths to their handler functions.
+/// Populated at startup via route registration and consulted on each incoming POST request.
 static POST_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
     let m = HashMap::new();
     Mutex::new(m)
 });
 
+/// Lazily initialized, thread-safe map of PATCH route paths to their handler functions.
+/// Populated at startup via route registration and consulted on each incoming PATCH request.
 static PATCH_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
     let m = HashMap::new();
     Mutex::new(m)
 });
 
+/// Lazily initialized, thread-safe map of DELETE route paths to their handler functions.
+/// Populated at startup via route registration and consulted on each incoming DELETE request.
 static DELETE_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
     let m = HashMap::new();
     Mutex::new(m)
 });
 
+/// Lazily initialized, thread-safe list of all registered route paths across all HTTP methods.
+/// Used for introspection, validation, or generating route listings (e.g. a health/debug endpoint).
 static PATHS: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| {
     let m = Vec::new();
     Mutex::new(m)
