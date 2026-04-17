@@ -86,6 +86,21 @@ impl FromStr for Method {
     }
 }
 
+/// Returns a reference to the route table for the given HTTP method.
+///
+/// The returned reference points to one of the global [`LazyLock`]-wrapped route maps,
+/// giving the caller direct access to lock and mutate it — useful for bulk operations
+/// such as registering multiple routes or inspecting the full handler map for a method.
+///
+/// For single-route lookups, prefer [`get_route_function`] instead.
+///
+/// # Examples
+///
+/// ```
+/// let routes = get_route_handlers_by_method(Method::GET);
+/// let mut map = routes.lock().unwrap();
+/// map.insert("/health".to_string(), health_handler);
+/// ```
 pub fn get_route_handlers_by_method(
     method: Method,
 ) -> &'static LazyLock<Mutex<HashMap<String, RouteHandler>>> {
