@@ -167,13 +167,31 @@ pub fn register_route(method: Method, path: &str, function: RouteHandler) {
     route_handlers.insert(path.to_string(), function);
 }
 
-pub fn extract_path_from_request(request: &str) -> Option<String> {
-    let mut parts = request.split(' ');
-    parts.next()?;
+/// Extracts the request target (path and optional query string) from a raw HTTP request line.
+///
+/// Expects the standard HTTP request line format: `METHOD PATH HTTP/VERSION`, for example
+/// `GET /users?id=1 HTTP/1.1`. The second whitespace-delimited token is returned as the path.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidData`] if the request line does not contain at least two
+/// whitespace-delimited tokens.
+///
+/// # Examples
+///
+/// ```
+/// let path = extract_path_from_request("GET /users?id=1 HTTP/1.1")?;
+/// assert_eq!(path, "/users?id=1");
+///
+/// assert!(extract_path_from_request("MALFORMED").is_err());
+/// ```
+pub fn extract_path_from_request(request: &str) -> Result<String, Error> {
+    let path = request
+        .splitn(3, ' ')
+        .nth(1)
+        .ok_or(Error::InvalidData("Invalid request lines"))?;
 
-    let path = parts.next()?;
-
-    Some(path.to_string())
+    Ok(path.to_string())
 }
 
 pub fn is_path_matching_route_path(route_path: &str, path: &str) -> bool {
