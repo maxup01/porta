@@ -43,6 +43,7 @@ static PATHS: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| {
     Mutex::new(m)
 });
 
+/// Enum representing http methods
 pub enum Method {
     GET,
     POST,
@@ -50,6 +51,25 @@ pub enum Method {
     DELETE,
 }
 
+/// Parses a string slice into an HTTP [`Method`].
+///
+/// Matching is case-insensitive, so `"get"`, `"GET"`, and `"Get"` all produce [`Method::GET`].
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidData`] if the string does not correspond to a supported HTTP method.
+///
+/// # Examples
+///
+/// ```
+/// let method: Method = "POST".parse()?;
+/// assert_eq!(method, Method::POST);
+///
+/// let method: Method = "delete".parse()?;
+/// assert_eq!(method, Method::DELETE);
+///
+/// assert!("CONNECT".parse::<Method>().is_err());
+/// ```
 impl FromStr for Method {
     type Err = Error;
 
