@@ -86,6 +86,17 @@ impl FromStr for Method {
     }
 }
 
+pub fn get_route_handlers_by_method(
+    method: Method,
+) -> &'static LazyLock<Mutex<HashMap<String, RouteHandler>>> {
+    match method {
+        Method::GET => &GET_ROUTES,
+        Method::POST => &POST_ROUTES,
+        Method::PATCH => &PATCH_ROUTES,
+        Method::DELETE => &DELETE_ROUTES,
+    }
+}
+
 /// Looks up the handler function registered for the given URL and HTTP method.
 ///
 /// The URL is normalized before lookup: any query string (everything from `?` onward)
@@ -109,27 +120,17 @@ pub fn get_route_function(url: &str, method: Method) -> Result<Option<RouteHandl
         None => url,
     };
 
-    let route_handlers = match method {
-        Method::GET => GET_ROUTES.lock().unwrap(),
-        Method::POST => POST_ROUTES.lock().unwrap(),
-        Method::PATCH => PATCH_ROUTES.lock().unwrap(),
-        Method::DELETE => DELETE_ROUTES.lock().unwrap(),
-    };
+    let route_handlers = get_route_handlers_by_method(method).lock().unwrap();
 
     Ok(route_handlers.get(path).copied())
 }
 
-pub fn register_route(method: Method, path: &str, function: fn(&str) -> String) {
-    let mut map_with_routes = match method {
-        Method::GET => GET_ROUTES.lock().unwrap(),
-        Method::POST => POST_ROUTES.lock().unwrap(),
-        Method::PATCH => PATCH_ROUTES.lock().unwrap(),
-        Method::DELETE => DELETE_ROUTES.lock().unwrap(),
-    };
+pub fn register_route(method: Method, path: &str, function: RouteHandler) {
+    let mut route_handlers = get_route_handlers_by_method(method).lock().unwrap();
 
     PATHS.lock().unwrap().push(path.to_string());
 
-    map_with_routes.insert(path.to_string(), function);
+    route_handlers.insert(path.to_string(), function);
 }
 
 pub fn extract_path_from_request(request: &str) -> Option<String> {
