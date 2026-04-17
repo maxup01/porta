@@ -140,6 +140,25 @@ pub fn get_route_function(url: &str, method: Method) -> Result<Option<RouteHandl
     Ok(route_handlers.get(path).copied())
 }
 
+/// Registers a handler function for the given HTTP method and path.
+///
+/// The path is added to the global [`PATHS`] list and the handler is inserted into
+/// the corresponding method's route table, making it available for dispatch on
+/// incoming requests.
+///
+/// # Panics
+///
+/// Panics if either the method's route table mutex or the [`PATHS`] mutex is poisoned.
+///
+/// # Examples
+///
+/// ```
+/// fn hello_handler(body: &str) -> String {
+///     "Hello, world!".to_string()
+/// }
+///
+/// register_route(Method::GET, "/hello", hello_handler);
+/// ```
 pub fn register_route(method: Method, path: &str, function: RouteHandler) {
     let mut route_handlers = get_route_handlers_by_method(method).lock().unwrap();
 
