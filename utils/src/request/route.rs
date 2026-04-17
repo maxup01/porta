@@ -86,17 +86,37 @@ impl FromStr for Method {
     }
 }
 
-pub fn get_route_function(request: &str, method: Method) -> Option<fn(&str) -> String> {
-    let path = request.splitn(2, '?').next().unwrap();
+/// Looks up the handler function registered for the given URL and HTTP method.
+///
+/// The URL is normalized before lookup: any query string (everything from `?` onward)
+/// is stripped so that `/users?id=1` resolves the same route as `/users`.
+///
+/// Returns `Ok(Some(handler))` if a matching route is found, `Ok(None)` if the path
+/// is not registered for that method, or an [`Error`] if the route table lock is poisoned.
+///
+/// # Examples
+///
+/// ```
+/// let handler = get_route_function("/users?id=42", Method::GET).unwrap();
+/// assert!(handler.is_some());
+///
+/// let handler = get_route_function("/nonexistent", Method::DELETE).unwrap();
+/// assert!(handler.is_none());
+/// ```
+pub fn get_route_function(url: &str, method: Method) -> Result<Option<RouteHandler>, Error> {
+    let path = match url.split_once('?') {
+        Some((path, _)) => path,
+        None => url,
+    };
 
-    let routes = match method {
+    let route_handlers = match method {
         Method::GET => GET_ROUTES.lock().unwrap(),
         Method::POST => POST_ROUTES.lock().unwrap(),
         Method::PATCH => PATCH_ROUTES.lock().unwrap(),
         Method::DELETE => DELETE_ROUTES.lock().unwrap(),
     };
 
-    routes.get(path).copied()
+    Ok(route_handlers.get(path).copied())
 }
 
 pub fn register_route(method: Method, path: &str, function: fn(&str) -> String) {
