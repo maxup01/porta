@@ -1,23 +1,29 @@
-use std::collections::HashMap;
-use std::sync::{Mutex, LazyLock};
-use std::vec::Vec;
+use error::Error;
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    sync::{LazyLock, Mutex},
+    vec::Vec,
+};
 
-static GET_ROUTES: LazyLock<Mutex<HashMap<String, fn(&str) -> String>>> = LazyLock::new(|| {
+type RouteHandler = fn(&str) -> String;
+
+static GET_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
+    let m: HashMap<String, fn(&str) -> String> = HashMap::new();
+    Mutex::new(m)
+});
+
+static POST_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
     let m = HashMap::new();
     Mutex::new(m)
 });
 
-static POST_ROUTES: LazyLock<Mutex<HashMap<String, fn(&str) -> String>>> = LazyLock::new(|| {
+static PATCH_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
     let m = HashMap::new();
     Mutex::new(m)
 });
 
-static PATCH_ROUTES: LazyLock<Mutex<HashMap<String, fn(&str) -> String>>> = LazyLock::new(|| {
-    let m = HashMap::new();
-    Mutex::new(m)
-});
-
-static DELETE_ROUTES: LazyLock<Mutex<HashMap<String, fn(&str) -> String>>> = LazyLock::new(|| {
+static DELETE_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
     let m = HashMap::new();
     Mutex::new(m)
 });
@@ -31,17 +37,21 @@ pub enum Method {
     GET,
     POST,
     PATCH,
-    DELETE
+    DELETE,
 }
 
-impl Method {
-    pub fn from_str(method: &str) -> Option<Method> {
-        match method.to_uppercase().as_str() {
-            "GET" => Some(Method::GET),
-            "POST" => Some(Method::POST),
-            "PATCH" => Some(Method::PATCH),
-            "DELETE" => Some(Method::DELETE),
-            _ => None,
+impl FromStr for Method {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "GET" => Ok(Method::GET),
+            "POST" => Ok(Method::POST),
+            "PATCH" => Ok(Method::PATCH),
+            "DELETE" => Ok(Method::DELETE),
+            _ => Err(Error::InvalidData(
+                "Passed string that doesn't match any http method",
+            )),
         }
     }
 }
@@ -50,38 +60,21 @@ pub fn get_route_function(request: &str, method: Method) -> Option<fn(&str) -> S
     let path = request.splitn(2, '?').next().unwrap();
 
     let routes = match method {
-        Method::GET => {
-            GET_ROUTES.lock().unwrap()
-        }
-        Method::POST => {
-            POST_ROUTES.lock().unwrap()
-        }
-        Method::PATCH => {
-            PATCH_ROUTES.lock().unwrap()
-        }
-        Method::DELETE => {
-            DELETE_ROUTES.lock().unwrap()
-        }
+        Method::GET => GET_ROUTES.lock().unwrap(),
+        Method::POST => POST_ROUTES.lock().unwrap(),
+        Method::PATCH => PATCH_ROUTES.lock().unwrap(),
+        Method::DELETE => DELETE_ROUTES.lock().unwrap(),
     };
 
     routes.get(path).copied()
 }
 
 pub fn register_route(method: Method, path: &str, function: fn(&str) -> String) {
-
     let mut map_with_routes = match method {
-        Method::GET => {
-            GET_ROUTES.lock().unwrap()
-        }
-        Method::POST => {
-            POST_ROUTES.lock().unwrap()
-        }
-        Method::PATCH => {
-            PATCH_ROUTES.lock().unwrap()
-        }
-        Method::DELETE => {
-            DELETE_ROUTES.lock().unwrap()
-        }
+        Method::GET => GET_ROUTES.lock().unwrap(),
+        Method::POST => POST_ROUTES.lock().unwrap(),
+        Method::PATCH => PATCH_ROUTES.lock().unwrap(),
+        Method::DELETE => DELETE_ROUTES.lock().unwrap(),
     };
 
     PATHS.lock().unwrap().push(path.to_string());
@@ -99,7 +92,6 @@ pub fn extract_path_from_request(request: &str) -> Option<String> {
 }
 
 pub fn is_path_matching_route_path(route_path: &str, path: &str) -> bool {
-
     let route_path_parts: Vec<&str> = route_path.split('/').collect();
     let path_parts: Vec<&str> = path.split('/').collect();
 
@@ -108,10 +100,14 @@ pub fn is_path_matching_route_path(route_path: &str, path: &str) -> bool {
     }
 
     for (route_path_part, path_part) in route_path_parts.iter().zip(path_parts.iter()) {
-        if (route_path_part != path_part && !route_path_part.starts_with('{') && !route_path_part.ends_with('}')) 
-            || (route_path_part.starts_with('{') && route_path_part.ends_with('}') 
-            && !(path_part.starts_with('{') && path_part.ends_with('}')) 
-            && (path_part.starts_with('{') || path_part.ends_with('}'))) {
+        if (route_path_part != path_part
+            && !route_path_part.starts_with('{')
+            && !route_path_part.ends_with('}'))
+            || (route_path_part.starts_with('{')
+                && route_path_part.ends_with('}')
+                && !(path_part.starts_with('{') && path_part.ends_with('}'))
+                && (path_part.starts_with('{') || path_part.ends_with('}')))
+        {
             return false;
         }
     }
@@ -129,7 +125,10 @@ pub fn get_matching_route_path(path: &str) -> Option<String> {
     None
 }
 
-pub fn extract_method_from_request(request: &str) -> Option<Method> {
-    let method = request.split_whitespace().next()?;
+pub fn extract_method_from_request(request: &str) -> Result<Method, Error> {
+    let (method, _) = request
+        .split_once(' ')
+        .ok_or(Error::InvalidData("Invalid request lines"))?;
+
     Method::from_str(method)
 }
