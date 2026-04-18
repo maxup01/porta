@@ -44,6 +44,7 @@ static PATHS: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| {
 });
 
 /// Enum representing http methods
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Method {
     GET,
     POST,
@@ -62,10 +63,12 @@ pub enum Method {
 /// # Examples
 ///
 /// ```
-/// let method: Method = "POST".parse()?;
+/// use utils::request::route::Method;
+///
+/// let method: Method = "POST".parse().unwrap();
 /// assert_eq!(method, Method::POST);
 ///
-/// let method: Method = "delete".parse()?;
+/// let method: Method = "delete".parse().unwrap();
 /// assert_eq!(method, Method::DELETE);
 ///
 /// assert!("CONNECT".parse::<Method>().is_err());
@@ -97,9 +100,15 @@ impl FromStr for Method {
 /// # Examples
 ///
 /// ```
+/// use utils::request::route::{Method, get_route_handlers_by_method};
+///
+/// fn handler(body: &str) -> String {
+///     "Hello, world!".to_string()
+/// }
+///
 /// let routes = get_route_handlers_by_method(Method::GET);
 /// let mut map = routes.lock().unwrap();
-/// map.insert("/health".to_string(), health_handler);
+/// map.insert("/health".to_string(), handler);
 /// ```
 pub fn get_route_handlers_by_method(
     method: Method,
@@ -123,6 +132,14 @@ pub fn get_route_handlers_by_method(
 /// # Examples
 ///
 /// ```
+/// use utils::request::route::{Method, register_route, get_route_function};
+///
+///fn handler(body: &str) -> String {
+///     "Hello, world!".to_string()
+/// }
+///
+/// register_route(Method::GET, "/users", handler);
+///
 /// let handler = get_route_function("/users?id=42", Method::GET).unwrap();
 /// assert!(handler.is_some());
 ///
@@ -153,6 +170,8 @@ pub fn get_route_function(url: &str, method: Method) -> Result<Option<RouteHandl
 /// # Examples
 ///
 /// ```
+/// use utils::request::route::{Method, register_route};
+///
 /// fn hello_handler(body: &str) -> String {
 ///     "Hello, world!".to_string()
 /// }
@@ -180,7 +199,9 @@ pub fn register_route(method: Method, path: &str, function: RouteHandler) {
 /// # Examples
 ///
 /// ```
-/// let path = extract_path_from_request("GET /users?id=1 HTTP/1.1")?;
+/// use utils::request::route::extract_path_from_request;
+///
+/// let path = extract_path_from_request("GET /users?id=1 HTTP/1.1").unwrap();
 /// assert_eq!(path, "/users?id=1");
 ///
 /// assert!(extract_path_from_request("MALFORMED").is_err());
@@ -213,6 +234,8 @@ fn fixed_path_segment(route_segment: &str) -> bool {
 /// # Examples
 ///
 /// ```
+/// use utils::request::route::is_path_matching_route_path;
+///
 /// assert!(is_path_matching_route_path("/users/42", "/users/{id}"));
 /// assert!(is_path_matching_route_path("/users/list", "/users/list"));
 ///
@@ -251,6 +274,12 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
 /// # Examples
 ///
 /// ```
+/// use utils::request::route::{Method, register_route, get_matching_route_path};
+///
+/// fn handler(id: &str) -> String {
+///     "Hello, world!".to_string()
+/// }
+///
 /// register_route(Method::GET, "/users/{id}", handler);
 ///
 /// assert_eq!(get_matching_route_path("/users/42"), Some("/users/{id}".to_string()));
@@ -281,7 +310,9 @@ pub fn get_matching_route_path(path: &str) -> Option<String> {
 /// # Examples
 ///
 /// ```
-/// let method = extract_method_from_request("POST /users HTTP/1.1")?;
+/// use utils::request::route::{Method, extract_method_from_request};
+///
+/// let method = extract_method_from_request("POST /users HTTP/1.1").unwrap();
 /// assert_eq!(method, Method::POST);
 ///
 /// assert!(extract_method_from_request("MALFORMED").is_err());
@@ -294,3 +325,7 @@ pub fn extract_method_from_request(request: &str) -> Result<Method, Error> {
 
     Method::from_str(method)
 }
+
+#[cfg(test)]
+#[path = "route_tests.rs"]
+mod tests;
