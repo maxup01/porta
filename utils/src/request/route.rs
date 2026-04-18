@@ -194,22 +194,42 @@ pub fn extract_path_from_request(request: &str) -> Result<String, Error> {
     Ok(path.to_string())
 }
 
-pub fn is_path_matching_route_path(route_path: &str, path: &str) -> bool {
-    let route_path_parts: Vec<&str> = route_path.split('/').collect();
-    let path_parts: Vec<&str> = path.split('/').collect();
+/// Returns `true` if the route segment is a path parameter placeholder, e.g. `{id}`.
+fn path_param_segment(route_segment: &str) -> bool {
+    route_segment.starts_with('{') && route_segment.ends_with('}')
+}
 
-    if route_path_parts.len() != path_parts.len() {
+/// Returns `true` if the route segment is a literal path segment, e.g. `users`.
+fn fixed_path_segment(route_segment: &str) -> bool {
+    !route_segment.starts_with('{') || !route_segment.ends_with('}')
+}
+
+/// Returns `true` if a concrete request path matches a registered route path pattern.
+///
+/// Paths are compared segment by segment after splitting on `/`. A route segment wrapped
+/// in curly braces (e.g. `{id}`) matches any value in the corresponding position, while
+/// a fixed segment must match exactly. Paths with a different number of segments never match.
+///
+/// # Examples
+///
+/// ```
+/// assert!(is_path_matching_route_path("/users/42", "/users/{id}"));
+/// assert!(is_path_matching_route_path("/users/list", "/users/list"));
+///
+/// assert!(!is_path_matching_route_path("/users/42/posts", "/users/{id}"));
+/// assert!(!is_path_matching_route_path("/posts/42", "/users/{id}"));
+/// ```
+pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
+    let route_path_segments: Vec<&str> = route_path.split('/').collect();
+    let path_segments: Vec<&str> = path.split('/').collect();
+
+    if route_path_segments.len() != path_segments.len() {
         return false;
     }
 
-    for (route_path_part, path_part) in route_path_parts.iter().zip(path_parts.iter()) {
-        if (route_path_part != path_part
-            && !route_path_part.starts_with('{')
-            && !route_path_part.ends_with('}'))
-            || (route_path_part.starts_with('{')
-                && route_path_part.ends_with('}')
-                && !(path_part.starts_with('{') && path_part.ends_with('}'))
-                && (path_part.starts_with('{') || path_part.ends_with('}')))
+    for (route_path_segment, path_segment) in route_path_segments.iter().zip(path_segments.iter()) {
+        if !(path_param_segment(route_path_segment)
+            || (fixed_path_segment(route_path_segment) && route_path_segment == path_segment))
         {
             return false;
         }
