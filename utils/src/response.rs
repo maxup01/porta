@@ -11,6 +11,8 @@ use serde_json;
 /// # Examples
 ///
 /// ```rust
+/// use utils::response::HttpStatus;
+///
 /// let code = HttpStatus::NotFound as u32;
 /// assert_eq!(code, 404);
 ///
@@ -18,7 +20,7 @@ use serde_json;
 /// assert_eq!(label, "Not Found");
 /// ```
 #[repr(u32)]
-#[derive(Hash, Eq, PartialEq, Copy, Clone)]
+#[derive(Hash, Debug, Eq, PartialEq, Copy, Clone)]
 pub enum HttpStatus {
     /// 200 — The request succeeded.
     Ok = 200,
@@ -110,6 +112,9 @@ impl fmt::Display for HttpStatus {
 /// # Examples
 ///
 /// ```rust
+/// use utils::response::{HttpResponse, HttpStatus};
+/// use serde::{Serialize, Deserialize};
+///
 /// #[derive(Serialize, Deserialize)]
 /// struct Payload { message: String }
 ///
@@ -146,7 +151,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// let resp = HttpResponse::new("hello", HttpStatus::Ok);
+    /// use utils::response::{HttpResponse, HttpStatus};
+    ///
+    /// let resp = HttpResponse::new("hello".to_string(), HttpStatus::Ok);
     /// ```
     pub fn new(body: T, status: HttpStatus) -> HttpResponse<T> {
         HttpResponse { body, status }
@@ -157,6 +164,8 @@ where
     /// # Examples
     ///
     /// ```rust
+    /// use utils::response::{HttpResponse, HttpStatus};
+    ///
     /// let resp = HttpResponse::new(42u32, HttpStatus::Ok);
     /// assert_eq!(resp.body(), 42);
     /// ```
@@ -169,7 +178,9 @@ where
     /// # Examples
     ///
     /// ```rust
-    /// let resp = HttpResponse::new("data", HttpStatus::Accepted);
+    /// use utils::response::{HttpResponse, HttpStatus};
+    ///
+    /// let resp = HttpResponse::new("data".to_string(), HttpStatus::Accepted);
     /// assert_eq!(resp.status(), HttpStatus::Accepted);
     /// ```
     pub fn status(&self) -> HttpStatus {
@@ -202,6 +213,9 @@ where
 /// # Examples
 ///
 /// ```rust
+/// use utils::response::{HttpResponse, HttpStatus, format_response};
+/// use serde::{Serialize, Deserialize};
+///
 /// #[derive(Serialize, Deserialize)]
 /// struct Body { ok: bool }
 ///
@@ -231,3 +245,7 @@ where
         serialized_value
     )
 }
+
+#[cfg(test)]
+#[path = "response_tests.rs"]
+mod tests;
