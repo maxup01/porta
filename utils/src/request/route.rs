@@ -238,16 +238,55 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
     true
 }
 
+/// Finds the first registered route path that matches the given request path.
+///
+/// Iterates over all paths in [`PATHS`] and returns the first one that matches
+/// according to [`is_path_matching_route_path`]. Returns `None` if no registered
+/// route matches.
+///
+/// # Panics
+///
+/// Panics if the [`PATHS`] mutex is poisoned.
+///
+/// # Examples
+///
+/// ```
+/// register_route(Method::GET, "/users/{id}", handler);
+///
+/// assert_eq!(get_matching_route_path("/users/42"), Some("/users/{id}".to_string()));
+/// assert_eq!(get_matching_route_path("/nonexistent"), None);
+/// ```
 pub fn get_matching_route_path(path: &str) -> Option<String> {
-    let paths = PATHS.lock().unwrap();
-    for route_path in paths.iter() {
-        if is_path_matching_route_path(route_path, path) {
-            return Some(route_path.clone());
+    let route_paths = PATHS.lock().unwrap();
+
+    for route_path in route_paths.iter() {
+        if is_path_matching_route_path(path, route_path) {
+            return Some(route_path.to_string());
         }
     }
+
     None
 }
 
+/// Extracts and parses the HTTP method from a raw HTTP request line.
+///
+/// Expects the standard HTTP request line format: `METHOD PATH HTTP/VERSION`, for example
+/// `POST /users HTTP/1.1`. The first whitespace-delimited token is parsed into a [`Method`].
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidData`] if the request line contains no whitespace, or if the
+/// first token does not correspond to a supported HTTP method (see [`Method::from_str`]).
+///
+/// # Examples
+///
+/// ```
+/// let method = extract_method_from_request("POST /users HTTP/1.1")?;
+/// assert_eq!(method, Method::POST);
+///
+/// assert!(extract_method_from_request("MALFORMED").is_err());
+/// assert!(extract_method_from_request("CONNECT /users HTTP/1.1").is_err());
+/// ```
 pub fn extract_method_from_request(request: &str) -> Result<Method, Error> {
     let (method, _) = request
         .split_once(' ')
