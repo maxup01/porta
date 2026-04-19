@@ -36,6 +36,21 @@ pub fn get_route_path_attribute_value(
     None
 }
 
+/// Extracts the name and type of each typed argument from a function's parameter list,
+/// skipping `self` receivers.
+///
+/// # Arguments
+/// * `args` - Punctuated list of [`FnArg`] from the function signature.
+///
+/// # Returns
+/// A `Vec` of `(Ident, Type)` pairs, one per typed parameter in order.
+///
+/// # Example
+/// ```ignore
+/// // Given: fn handler(id: u32, name: String) -> String { ... }
+/// let pairs = get_input_arg_idents_and_types(&input_fn.sig.inputs);
+/// // pairs == [("id", u32), ("name", String)]
+/// ```
 pub fn get_input_arg_idents_and_types(args: &Punctuated<FnArg, Comma>) -> Vec<(syn::Ident, syn::Type)> {
     let mut fn_args: Vec<(syn::Ident, syn::Type)> = vec![];
 
