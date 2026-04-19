@@ -4,6 +4,23 @@ use std::vec::Vec;
 use syn::{FnArg, ItemFn, Lit, Meta, NestedMeta, Pat, PatType, punctuated::Punctuated, token::Comma};
 use utils::request::route::Method;
 
+/// Searches the attribute argument list for a `path = "..."` key-value pair
+/// and returns the path string if found.
+///
+/// # Arguments
+/// * `args` - Slice of [`NestedMeta`] parsed from the attribute's argument list.
+///
+/// # Returns
+/// `Some(String)` containing the path value if a `path = "..."` argument is present,
+/// or `None` if no such argument exists.
+///
+/// # Example
+/// ```ignore
+/// // Given: #[get(path = "/users/{id}")]
+/// // args would contain: path = "/users/{id}"
+/// let path = get_route_path_attribute_value(&args);
+/// assert_eq!(path, Some("/users/{id}".to_string()));
+/// ```
 pub fn get_route_path_attribute_value(
     args: &[NestedMeta],
 ) -> Option<String> {
