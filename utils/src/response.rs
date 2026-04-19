@@ -81,7 +81,7 @@ pub enum HttpStatus {
 impl fmt::Display for HttpStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let status_str = match self {
-            HttpStatus::Ok => "OK",
+            HttpStatus::Ok => "Ok",
             HttpStatus::Created => "Created",
             HttpStatus::Accepted => "Accepted",
             HttpStatus::NoContent => "No Content",
