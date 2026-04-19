@@ -164,6 +164,23 @@ fn method_tokens(http_method: &Method) -> TokenStream {
     }
 }
 
+/// Generates a `Vec` of [`TokenStream`] blocks that deserialize each function argument
+/// from the `map_with_params` HashMap into its declared Rust type.
+///
+/// Deserialization strategy per type:
+/// - **Numeric types** (`u8`–`f64`): parsed via `.parse()`, returns 404 on failure.
+/// - **`bool`**: matched against `"true"`, `"1"`, `"false"`, `"0"`, returns 404 otherwise.
+/// - **`String`**: converted directly via `.to_string()`.
+/// - **All other types**: deserialized via `serde_json::from_str`. If the value is not
+///   already a JSON object (`{...}`), it is wrapped in quotes first to allow
+///   deserialization of string-backed enums and newtypes. Returns 404 on failure.
+///
+/// # Arguments
+/// * `fn_args` - Slice of `(Ident, Type)` pairs representing the function parameters.
+///
+/// # Returns
+/// A `Vec<TokenStream>` where each element is a `let` binding that deserializes
+/// one parameter from `map_with_params`.
 fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec<TokenStream> {
     let mut deserialized = vec![];
 
