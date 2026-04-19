@@ -1,9 +1,6 @@
 use macros::*;
-use utils::response::http_response::HttpResponse;
-use utils::response::http_response::HttpStatus;
 use serde::{Deserialize, Serialize};
-
-inject_common_imports!();
+use utils::response::{HttpResponse, HttpStatus};
 
 #[get(path = "/")]
 fn index() -> HttpResponse<String> {
@@ -18,16 +15,16 @@ fn hello(name: String) -> HttpResponse<String> {
 #[derive(Serialize, Deserialize)]
 struct RandomStruct {
     pub num: u64,
-    pub name: String
+    pub name: String,
 }
 
 #[post(path = "/something/{id}")]
-fn something(id: u64, body :RandomStruct) -> HttpResponse<String> {
+fn something(id: u64, body: RandomStruct) -> HttpResponse<String> {
     HttpResponse::new(
         format!("Received id: {} num: {} name: {}", id, body.num, body.name),
         HttpStatus::Ok,
     )
 }
 
-#[unsecure_http_server]
+#[unsecure_http_server(ip = "127.0.0.1", port = 8080)]
 async fn main() {}
