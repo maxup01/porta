@@ -63,6 +63,27 @@ pub fn get_input_arg_idents_and_types(args: &Punctuated<FnArg, Comma>) -> Vec<(s
     fn_args
 }
 
+/// Generates the full [`TokenStream`] for a route handler function and its
+/// corresponding route registration constructor.
+///
+/// The generated function:
+/// - Accepts a raw HTTP request string as `&str`
+/// - Extracts path parameters from the URL using the provided `path` template
+/// - For `GET`/`DELETE`: additionally extracts query parameters and merges them
+/// - For `POST`/`PATCH`: extracts the request body and maps it to the non-path parameter
+/// - Deserializes all parameters into their declared Rust types
+/// - Calls the original function body and formats the return value as an HTTP response
+///
+/// A `#[ctor::ctor]` registration function is also emitted to register the handler
+/// with the global route table at program startup.
+///
+/// # Arguments
+/// * `path` - The route path template, e.g. `"/users/{id}"`.
+/// * `http_method` - The HTTP method this handler responds to.
+/// * `input_fn` - The parsed function item to transform.
+///
+/// # Returns
+/// A [`TokenStream`] containing the transformed handler function and route registration.
 pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: &ItemFn) -> TokenStream {
     let fn_name = &input_fn.sig.ident;
     let fn_block = &input_fn.block;
@@ -132,6 +153,8 @@ pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: 
     fn_expanded
 }
 
+/// Converts a [`Method`] enum variant into its corresponding [`TokenStream`] identifier,
+/// used when emitting `Method::GET`, `Method::POST`, etc. into generated code.
 fn method_tokens(http_method: &Method) -> TokenStream {
     match http_method {
         Method::GET => quote! {GET},
