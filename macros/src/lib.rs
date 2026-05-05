@@ -72,7 +72,7 @@ pub fn patch(
 }
 
 #[proc_macro_attribute]
-pub fn unsecure_http_server(
+pub fn http_server(
     attr: proc_macro::TokenStream,
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
@@ -101,19 +101,50 @@ pub fn unsecure_http_server(
     let port = port_lit.expect("Port is not specified");
 
     let expanded = quote! {
-        use std::net::SocketAddr;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt}; 
+        use std::{net::SocketAddr, io::BufReader, sync::Arc};
+        use tokio::{
+            net::TcpStream,
+            io::{AsyncReadExt, AsyncWriteExt}
+        };
+        use tokio_rustls::TlsAcceptor;
+        use rustls::{
+            pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+            ServerConfig, RootCertStore
+        };
+        use rcgen::generate_simple_self_signed; 
 
         #[tokio::main]
         #sig {
+            let subject_alt_names = vec!["embedded-http-server-rs".to_string(), #ip_str.to_string()];
+            let cert = generate_simple_self_signed(subject_alt_names).unwrap();
+
+            let cert_der = CertificateDer::from(cert.cert.der().to_vec());
+            let key_der = PrivateKeyDer::Pkcs8(
+                PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der())
+            );
+
+            let server_config = ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(vec![cert_der], key_der)
+                .expect("Failed to initialize server config");
+
+            let acceptor = TlsAcceptor::from(Arc::new(server_config));
+
             let addr = format!("{}:{}", #ip_str, #port);
             let listener = tokio::net::TcpListener::bind(&addr).await.expect("Failed to bind address");
 
             loop {
-                let (mut socket, _) = listener.accept().await.expect("Failed to accept connection");
+                let (socket, _) = listener.accept().await.expect("Failed to accept connection");
+                let acceptor = acceptor.clone();
+
                 tokio::spawn(async move {
+                    let mut tls_stream = acceptor
+                        .accept(socket)
+                        .await
+                        .expect("TLS handshake failed");
+
                     let mut buffer = [0u8; 4096];
-                    let n = match socket.read(&mut buffer).await {
+                    let n = match tls_stream.read(&mut buffer).await {
                         Ok(n) if n == 0 => return,
                         Ok(n) => n,
                         Err(_) => return,
@@ -140,7 +171,10 @@ pub fn unsecure_http_server(
                         response = route_function(&request);
                     }
 
-                    let _ = socket.write_all(response.as_bytes()).await;
+                    tls_stream
+                        .write_all(response.as_bytes())
+                        .await
+                        .expect("Failed to write");
                 });
             }
         }
