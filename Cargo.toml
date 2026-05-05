@@ -7,9 +7,12 @@ edition = "2024"
 members = ["macros", "error", "utils"]
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.52.0", features = ["full"] }
 macros = { path = "./macros" }
 utils = { path = "./utils" }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-ctor = "0.1"
+serde_json = { version = "1.0.0" }
+ctor = { version = "0.1.0" }
+rustls = { version = "0.23.0" }
+tokio-rustls = { version = "0.26.0" }
+rcgen = { version = "0.13.0" }
