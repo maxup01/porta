@@ -26,5 +26,5 @@ fn something(id: u64, body: RandomStruct) -> HttpResponse<String> {
     )
 }
 
-#[unsecure_http_server(ip = "127.0.0.1", port = 8080)]
+#[http_server(ip = "127.0.0.1", port = 8080)]
 async fn main() {}
