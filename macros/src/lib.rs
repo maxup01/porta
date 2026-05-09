@@ -35,6 +35,19 @@ pub fn get(
     expanded.into()
 }
 
+/// Registers the annotated function as a handler for HTTP `DELETE` requests at the given path.
+///
+/// # Arguments
+///
+/// - `path` — the route path to match, as a string literal (e.g. `"/users/:id"`)
+///
+/// The `path` argument is required. Omitting it causes a compile-time panic.
+///
+/// # See also
+///
+/// - [`get`] — the equivalent macro for `GET` requests
+/// - [`generate_route_handler_tokens`] — generates the registration code for the resolved handler
+/// - [`get_route_path_attribute_value`] — extracts the `path` value from the macro arguments
 #[proc_macro_attribute]
 pub fn delete(
     args: proc_macro::TokenStream,
