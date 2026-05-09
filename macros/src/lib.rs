@@ -71,6 +71,55 @@ pub fn patch(
     expanded.into()
 }
 
+/// An attribute macro that transforms `main` into a self-contained TLS HTTP server.
+///
+/// At compile time, this macro injects all boilerplate needed to:
+/// - Generate a self-signed TLS certificate (via [`rcgen`])
+/// - Bind a [`tokio::net::TcpListener`] to the given address
+/// - Accept connections concurrently and perform TLS handshakes
+/// - Parse incoming HTTP requests and dispatch them to registered route handlers
+/// - Return a `404 Not Found` response when no route matches
+///
+/// # Arguments
+///
+/// - `ip` — IP address to bind to, as a string literal (e.g. `"127.0.0.1"` or `"0.0.0.0"`)
+/// - `port` — TCP port to listen on, as an integer literal (e.g. `8443`)
+///
+/// Both arguments are required. Missing either one causes a compile-time panic.
+///
+/// # Constraints
+///
+/// This macro **must** be applied to a function named `main`. Applying it to any
+/// other function name causes a compile-time panic.
+///
+/// # TLS
+///
+/// A self-signed certificate is generated in-process on every startup using [`rcgen`].
+/// The Subject Alternative Names are set to `"embedded-http-server-rs"` and the
+/// provided `ip` value. No client authentication is required.
+///
+/// > Self-signed certificates are not browser-trusted. This is suitable for
+/// > development or internal tooling. For production, replace with a CA-issued cert.
+///
+/// # Routing
+///
+/// The macro dispatches requests using helpers from `utils::request::route`:
+///
+/// - [`utils::request::route::extract_path_from_request`] — parses the request path
+/// - [`utils::request::route::extract_method_from_request`] — parses the HTTP method
+/// - [`utils::request::route::get_matching_route_path`] — resolves a registered route pattern
+/// - [`utils::request::route::get_route_function`] — returns the handler for `(route, method)`
+///
+/// Route handlers must have the signature:
+///
+/// They receive the full raw HTTP request string and must return a complete HTTP
+/// response string (status line + headers + body).
+///
+/// # Limitations
+///
+/// - Requests are read into a fixed 4 KB buffer. Large bodies will be truncated.
+/// - Each connection handles exactly one request (no keep-alive or pipelining).
+/// - TLS handshake failures and write errors cause the spawned task to panic.
 #[proc_macro_attribute]
 pub fn http_server(
     attr: proc_macro::TokenStream,
