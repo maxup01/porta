@@ -7,6 +7,18 @@ use quote::quote;
 use syn::{parse_macro_input, AttributeArgs, ItemFn, Lit, Meta, NestedMeta};
 use utils::request::route::Method;
 
+/// Registers the annotated function as a handler for HTTP `GET` requests at the given path.
+///
+/// # Arguments
+///
+/// - `path` — the route path to match, as a string literal (e.g. `"/hello"` or `"/users/:id"`)
+///
+/// The `path` argument is required. Omitting it causes a compile-time panic.
+///
+/// # See also
+///
+/// - [`generate_route_handler_tokens`] — generates the registration code for the resolved handler
+/// - [`get_route_path_attribute_value`] — extracts the `path` value from the macro arguments
 #[proc_macro_attribute]
 pub fn get(
     args: proc_macro::TokenStream,
