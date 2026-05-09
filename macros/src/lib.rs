@@ -94,6 +94,21 @@ pub fn post(
     expanded.into()
 }
 
+/// Registers the annotated function as a handler for HTTP `PATCH` requests at the given path.
+///
+/// # Arguments
+///
+/// - `path` — the route path to match, as a string literal (e.g. `"/users/:id"`)
+///
+/// The `path` argument is required. Omitting it causes a compile-time panic.
+///
+/// # See also
+///
+/// - [`get`] — the equivalent macro for `GET` requests
+/// - [`post`] — the equivalent macro for `POST` requests
+/// - [`delete`] — the equivalent macro for `DELETE` requests
+/// - [`generate_route_handler_tokens`] — generates the registration code for the resolved handler
+/// - [`get_route_path_attribute_value`] — extracts the `path` value from the macro arguments
 #[proc_macro_attribute]
 pub fn patch(
     args: proc_macro::TokenStream,
