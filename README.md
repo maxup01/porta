@@ -1,4 +1,4 @@
-# embedded-http-server
+# embedded-web-server
 
 **Macro-driven, async embedded web server in Rust.**
 
