@@ -124,7 +124,7 @@ The server is **TLS-only**. Encryption is always on, but the certificate is **se
 
 ```
 .
-├── src/            # binary entry point + crate re-exports
+├── src/            # crate re-exports
 ├── macros/         # proc-macro crate: #[get], #[post], #[http_server], etc.
 ├── utils/          # request parsing, routing table, response formatting
 ├── error/          # shared error types
