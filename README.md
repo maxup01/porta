@@ -2,7 +2,7 @@
 
 **Macro-driven, async embedded web server in Rust.**
 
-`embedded-http-server` is a minimalist, async HTTP server designed to be embedded directly into your application. You define routes as plain functions, annotate them with attribute macros, and turn `main` into a running TLS server with a single attribute — no router setup, no boilerplate.
+`embedded-web-server` is a minimalist, async HTTP server designed to be embedded directly into your application. You define routes as plain functions, annotate them with attribute macros, and turn `main` into a running TLS server with a single attribute — no router setup, no boilerplate.
 
 ## Features
 
