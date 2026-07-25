@@ -126,8 +126,22 @@ pub fn get_route_handlers_by_method(
 /// The URL is normalized before lookup: any query string (everything from `?` onward)
 /// is stripped so that `/users?id=1` resolves the same route as `/users`.
 ///
-/// Returns `Ok(Some(handler))` if a matching route is found, `Ok(None)` if the path
-/// is not registered for that method, or an [`Error`] if the route table lock is poisoned.
+/// The remaining path is matched against the route patterns registered *for this method
+/// only*, using [`is_path_matching_route_path`], so a concrete path such as `/users/42`
+/// resolves the pattern `/users/{id}`. Because each method owns its table, a route
+/// registered for one method can never resolve a request made with another.
+///
+/// When several patterns match, the most specific one wins — that is, the one with the
+/// fewest `{param}` segments, so `/users/me` beats `/users/{id}`. Ties between patterns
+/// of equal specificity (two routes differing only in parameter name) resolve
+/// arbitrarily; registering both is a routing ambiguity on the caller's part.
+///
+/// Returns `Ok(Some(handler))` if a matching route is found, `Ok(None)` if no pattern
+/// registered for that method matches the path.
+///
+/// # Panics
+///
+/// Panics if the method's route table mutex is poisoned.
 ///
 /// # Examples
 ///
@@ -139,11 +153,20 @@ pub fn get_route_handlers_by_method(
 /// }
 ///
 /// register_route(Method::GET, "/users", handler);
+/// register_route(Method::GET, "/users/{id}", handler);
 ///
 /// let handler = get_route_function("/users?id=42", Method::GET).unwrap();
 /// assert!(handler.is_some());
 ///
-/// let handler = get_route_function("/nonexistent", Method::DELETE).unwrap();
+/// // Concrete paths resolve against parameterised patterns
+/// let handler = get_route_function("/users/42", Method::GET).unwrap();
+/// assert!(handler.is_some());
+///
+/// // The route is registered for GET only
+/// let handler = get_route_function("/users/42", Method::DELETE).unwrap();
+/// assert!(handler.is_none());
+///
+/// let handler = get_route_function("/nonexistent", Method::GET).unwrap();
 /// assert!(handler.is_none());
 /// ```
 pub fn get_route_function(url: &str, method: Method) -> Result<Option<RouteHandler>, Error> {
@@ -154,7 +177,13 @@ pub fn get_route_function(url: &str, method: Method) -> Result<Option<RouteHandl
 
     let route_handlers = get_route_handlers_by_method(method).lock().unwrap();
 
-    Ok(route_handlers.get(path).copied())
+    let handler = route_handlers
+        .iter()
+        .filter(|(route_path, _)| is_path_matching_route_path(path, route_path))
+        .min_by_key(|(route_path, _)| route_path.matches('{').count())
+        .map(|(_, handler)| *handler);
+
+    Ok(handler)
 }
 
 /// Registers a handler function for the given HTTP method and path.
@@ -261,11 +290,28 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
     true
 }
 
-/// Finds the first registered route path that matches the given request path.
+/// Returns `true` if any registered route matches the given request path,
+/// regardless of which HTTP method it was registered for.
 ///
-/// Iterates over all paths in [`PATHS`] and returns the first one that matches
-/// according to [`is_path_matching_route_path`]. Returns `None` if no registered
-/// route matches.
+/// This deliberately ignores the method, and exists to distinguish "no such resource"
+/// from "wrong verb for this resource": when [`get_route_function`] finds no handler,
+/// a match here means the path is served by *some* other method, and the request should
+/// be answered with `405 Method Not Allowed` rather than `404 Not Found`.
+///
+/// Handler resolution must go through [`get_route_function`], never through this
+/// function — resolving a handler from a pattern registered under a different method
+/// is what this split is designed to prevent. Returning a `bool` rather than the
+/// matched pattern makes that misuse impossible to express.
+///
+/// Note that [`PATHS`] stores route *patterns*, so this is a structural match via
+/// [`is_path_matching_route_path`] and not a containment check: the concrete path
+/// `/users/42` matches the registered pattern `/users/{id}`.
+///
+/// # Caveats
+///
+/// This answers only *whether* some method serves the path, never *which*. Building an
+/// RFC 9110 `Allow` header requires probing each method's table via
+/// [`get_route_function`] instead.
 ///
 /// # Panics
 ///
@@ -274,7 +320,7 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
 /// # Examples
 ///
 /// ```
-/// use utils::request::route::{Method, register_route, get_matching_route_path};
+/// use utils::request::route::{Method, register_route, path_exists};
 ///
 /// fn handler(id: &str) -> String {
 ///     "Hello, world!".to_string()
@@ -282,19 +328,16 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
 ///
 /// register_route(Method::GET, "/users/{id}", handler);
 ///
-/// assert_eq!(get_matching_route_path("/users/42"), Some("/users/{id}".to_string()));
-/// assert_eq!(get_matching_route_path("/nonexistent"), None);
+/// // Matches structurally, despite being registered for GET only
+/// assert!(path_exists("/users/42"));
+/// assert!(!path_exists("/nonexistent"));
 /// ```
-pub fn get_matching_route_path(path: &str) -> Option<String> {
-    let route_paths = PATHS.lock().unwrap();
-
-    for route_path in route_paths.iter() {
-        if is_path_matching_route_path(path, route_path) {
-            return Some(route_path.to_string());
-        }
-    }
-
-    None
+pub fn path_exists(path: &str) -> bool {
+    PATHS
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|route_path| is_path_matching_route_path(path, route_path))
 }
 
 /// Extracts and parses the HTTP method from a raw HTTP request line.
