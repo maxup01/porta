@@ -114,7 +114,7 @@ pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: 
             }
 
             quote! {
-                let body = match utils::request::request_body::extract_request_body(request) {
+                let body = match ::embedded_web_server::utils::request::request_body::extract_request_body(request) {
                     Some(body) => body,
                     None => {
                         return format!(
@@ -129,7 +129,7 @@ pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: 
         },
         Method::GET | Method::DELETE => {
             quote! {
-                let query_params = utils::request::query::extract_params(path_from_request.as_str());
+                let query_params = ::embedded_web_server::utils::request::query::extract_params(path_from_request.as_str());
 
                 if let Some(extracted_query_params) = query_params {
                     map_with_params.extend(extracted_query_params);
@@ -140,7 +140,8 @@ pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: 
 
     let fn_expanded = quote! {
         #fn_vis fn #fn_name(request: &str) -> String {
-            let path_from_request = utils::request::route::extract_path_from_request(request).unwrap();
+            let path_from_request =
+                ::embedded_web_server::utils::request::route::extract_path_from_request(request).unwrap();
 
             // Path params are matched against the route pattern, which has no query string.
             // `path_from_request` is kept intact for query param extraction below.
@@ -149,21 +150,25 @@ pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: 
                 None => path_from_request.as_str(),
             };
 
-            let mut map_with_params = utils::request::path_param::extract_path_params(
+            let mut map_with_params = ::embedded_web_server::utils::request::path_param::extract_path_params(
                 #path, path_without_query
             ).unwrap();
 
-            #method_related_block 
+            #method_related_block
 
             #( #deserialized_args )*
 
             let fn_result = (|| #fn_block )();
-            utils::response::format_response(fn_result)
+            ::embedded_web_server::utils::response::format_response(fn_result)
         }
 
-        #[ctor::ctor]
+        #[::embedded_web_server::ctor::ctor]
         fn #register_fn_name() {
-            utils::request::route::register_route(utils::request::route::Method::#method_as_tokens, #path, #fn_name);
+            ::embedded_web_server::utils::request::route::register_route(
+                ::embedded_web_server::utils::request::route::Method::#method_as_tokens,
+                #path,
+                #fn_name
+            );
         }
     };
 
@@ -294,7 +299,7 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                     param_val = param_val_orig;
                 }
 
-                let #arg_name: #arg_type = match serde_json::from_str(param_val) {
+                let #arg_name: #arg_type = match ::embedded_web_server::serde_json::from_str(param_val) {
                     Ok(val) => val,
                     Err(_) => {
                         return format!(

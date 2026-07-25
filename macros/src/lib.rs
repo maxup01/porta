@@ -212,43 +212,49 @@ pub fn http_server(
     let port = port_lit.expect("Port is not specified");
 
     let expanded = quote! {
-        use std::{net::SocketAddr, io::BufReader, sync::Arc};
-        use tokio::{
-            net::TcpStream,
-            io::{AsyncReadExt, AsyncWriteExt}
-        };
-        use tokio_rustls::TlsAcceptor;
-        use rustls::{
-            pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
-            ServerConfig, RootCertStore
-        };
-        use rcgen::generate_simple_self_signed;
-
-        #[tokio::main]
+        // Every path below is absolute and routed through `embedded_web_server`, because
+        // this code is expanded into the *caller's* crate. The caller depends only on
+        // `embedded_web_server`, not on tokio/rustls/rcgen/ctor/serde_json directly, so
+        // any bare path here would fail to resolve downstream. See `embedded_web_server`'s
+        // crate-root re-exports.
+        #[::embedded_web_server::tokio::main(crate = "::embedded_web_server::tokio")]
         #sig {
-            let subject_alt_names = vec!["embedded-http-server-rs".to_string(), #ip_str.to_string()];
-            let cert = generate_simple_self_signed(subject_alt_names).unwrap();
+            // Trait methods can't be called through an absolute path, so these two are
+            // imported at function scope rather than into the caller's module.
+            use ::embedded_web_server::tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-            let cert_der = CertificateDer::from(cert.cert.der().to_vec());
-            let key_der = PrivateKeyDer::Pkcs8(
-                PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der())
+            let subject_alt_names = vec!["embedded-http-server-rs".to_string(), #ip_str.to_string()];
+            let cert = ::embedded_web_server::rcgen::generate_simple_self_signed(subject_alt_names)
+                .expect("Failed to generate self-signed certificate");
+
+            let cert_der = ::embedded_web_server::rustls::pki_types::CertificateDer::from(
+                cert.cert.der().to_vec()
+            );
+            let key_der = ::embedded_web_server::rustls::pki_types::PrivateKeyDer::Pkcs8(
+                ::embedded_web_server::rustls::pki_types::PrivatePkcs8KeyDer::from(
+                    cert.key_pair.serialize_der()
+                )
             );
 
-            let server_config = ServerConfig::builder()
+            let server_config = ::embedded_web_server::rustls::ServerConfig::builder()
                 .with_no_client_auth()
                 .with_single_cert(vec![cert_der], key_der)
                 .expect("Failed to initialize server config");
 
-            let acceptor = TlsAcceptor::from(Arc::new(server_config));
+            let acceptor = ::embedded_web_server::tokio_rustls::TlsAcceptor::from(
+                ::std::sync::Arc::new(server_config)
+            );
 
             let addr = format!("{}:{}", #ip_str, #port);
-            let listener = tokio::net::TcpListener::bind(&addr).await.expect("Failed to bind address");
+            let listener = ::embedded_web_server::tokio::net::TcpListener::bind(&addr)
+                .await
+                .expect("Failed to bind address");
 
             loop {
                 let (socket, _) = listener.accept().await.expect("Failed to accept connection");
                 let acceptor = acceptor.clone();
 
-                tokio::spawn(async move {
+                ::embedded_web_server::tokio::spawn(async move {
                     let mut tls_stream = acceptor
                         .accept(socket)
                         .await
@@ -262,7 +268,7 @@ pub fn http_server(
                     };
 
                     let request = String::from_utf8_lossy(&buffer[..n]).to_string();
-                    let path = utils::request::route::extract_path_from_request(&request).unwrap_or_default();
+                    let path = ::embedded_web_server::utils::request::route::extract_path_from_request(&request).unwrap_or_default();
 
                     // The request target includes the query string; route patterns never do,
                     // so match against the path only.
@@ -273,8 +279,8 @@ pub fn http_server(
 
                     // Fast path: one lookup in this method's own table. An unsupported
                     // verb (PUT, HEAD, ...) fails to parse and falls through as a miss.
-                    let route_function = match utils::request::route::extract_method_from_request(&request) {
-                        Ok(method) => utils::request::route::get_route_function(path_without_query, method)
+                    let route_function = match ::embedded_web_server::utils::request::route::extract_method_from_request(&request) {
+                        Ok(method) => ::embedded_web_server::utils::request::route::get_route_function(path_without_query, method)
                             .ok()
                             .flatten(),
                         Err(_) => None,
@@ -282,7 +288,7 @@ pub fn http_server(
 
                     let response = if let Some(route_function) = route_function {
                         route_function(&request)
-                    } else if utils::request::route::path_exists(path_without_query) {
+                    } else if ::embedded_web_server::utils::request::route::path_exists(path_without_query) {
                         // The path is served, just not by this verb.
                         format!(
                             "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
