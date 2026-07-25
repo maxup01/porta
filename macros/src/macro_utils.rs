@@ -132,8 +132,16 @@ pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: 
     let fn_expanded = quote! {
         #fn_vis fn #fn_name(request: &str) -> String {
             let path_from_request = utils::request::route::extract_path_from_request(request).unwrap();
+
+            // Path params are matched against the route pattern, which has no query string.
+            // `path_from_request` is kept intact for query param extraction below.
+            let path_without_query = match path_from_request.split_once('?') {
+                Some((path_only, _)) => path_only,
+                None => path_from_request.as_str(),
+            };
+
             let mut map_with_params = utils::request::path_param::extract_path_params(
-                #path, path_from_request.as_str()
+                #path, path_without_query
             ).unwrap();
 
             #method_related_block 
