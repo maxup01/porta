@@ -283,7 +283,7 @@ pub fn http_server(
                             "Not Found".len(),
                             "Not Found"
                         )
-                    }
+                    };
 
                     tls_stream
                         .write_all(response.as_bytes())
