@@ -2,7 +2,7 @@ use macros::{delete, get, patch, post};
 use serde::{Deserialize, Serialize};
 use utils::response::{HttpResponse, HttpStatus};
 
-const EXPECTED_OK_PREFIX: &str = "HTTP/1.1 200 Ok\r\n";
+const EXPECTED_OK_PREFIX: &str = "HTTP/1.1 200 OK\r\n";
 const EXPECTED_404_PREFIX: &str = "HTTP/1.1 404 Not Found\r\n";
 
 #[derive(Serialize, Deserialize)]

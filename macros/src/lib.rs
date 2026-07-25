@@ -155,10 +155,14 @@ pub fn patch(
 ///
 /// The macro dispatches requests using helpers from `utils::request::route`:
 ///
-/// - [`utils::request::route::extract_path_from_request`] — parses the request path
+/// - [`utils::request::route::extract_path_from_request`] — parses the request target
 /// - [`utils::request::route::extract_method_from_request`] — parses the HTTP method
-/// - [`utils::request::route::get_matching_route_path`] — resolves a registered route pattern
-/// - [`utils::request::route::get_route_function`] — returns the handler for `(route, method)`
+/// - [`utils::request::route::get_route_function`] — resolves the handler for `(path, method)`
+/// - [`utils::request::route::path_exists`] — on a miss, decides `405` versus `404`
+///
+/// The query string is stripped before matching, since route patterns never carry one.
+/// A path served by some other method yields `405 Method Not Allowed`; a path served by
+/// no method at all yields `404 Not Found`.
 ///
 /// Route handlers must have the signature:
 ///
@@ -267,16 +271,24 @@ pub fn http_server(
                         None => path.as_str(),
                     };
 
-                    let route_path = utils::request::route::get_matching_route_path(path_without_query);
+                    // Fast path: one lookup in this method's own table. An unsupported
+                    // verb (PUT, HEAD, ...) fails to parse and falls through as a miss.
+                    let route_function = match utils::request::route::extract_method_from_request(&request) {
+                        Ok(method) => utils::request::route::get_route_function(path_without_query, method)
+                            .ok()
+                            .flatten(),
+                        Err(_) => None,
+                    };
 
-                    let request_method =
-                        utils::request::route::extract_method_from_request(&request);
-
-                    let response = if let Some(route_path) = route_path
-                        && let Ok(method) = request_method
-                        && let Ok(Some(route_function)) = utils::request::route::get_route_function(&route_path, method)
-                    {
+                    let response = if let Some(route_function) = route_function {
                         route_function(&request)
+                    } else if utils::request::route::path_exists(path_without_query) {
+                        // The path is served, just not by this verb.
+                        format!(
+                            "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                            "Method Not Allowed".len(),
+                            "Method Not Allowed"
+                        )
                     } else {
                         format!(
                             "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
