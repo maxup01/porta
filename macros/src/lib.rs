@@ -4,7 +4,7 @@ mod macro_utils;
 
 use macro_utils::*;
 use quote::quote;
-use syn::{parse_macro_input, AttributeArgs, ItemFn, Lit, Meta, NestedMeta};
+use syn::{AttributeArgs, ItemFn, Lit, Meta, NestedMeta, parse_macro_input};
 use utils::request::route::Method;
 
 /// Registers the annotated function as a handler for HTTP `GET` requests at the given path.
@@ -27,10 +27,9 @@ pub fn get(
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
-    let path = get_route_path_attribute_value(&args)
-        .expect("Path for route handler not specified"); 
+    let path = get_route_path_attribute_value(&args).expect("Path for route handler not specified");
 
-    let expanded = generate_route_handler_tokens(&path, Method::GET, &input_fn); 
+    let expanded = generate_route_handler_tokens(&path, Method::GET, &input_fn);
 
     expanded.into()
 }
@@ -56,10 +55,9 @@ pub fn delete(
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
-    let path = get_route_path_attribute_value(&args)
-        .expect("Path for route handler not specified"); 
+    let path = get_route_path_attribute_value(&args).expect("Path for route handler not specified");
 
-    let expanded = generate_route_handler_tokens(&path, Method::DELETE, &input_fn); 
+    let expanded = generate_route_handler_tokens(&path, Method::DELETE, &input_fn);
 
     expanded.into()
 }
@@ -86,11 +84,10 @@ pub fn post(
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
-    let path = get_route_path_attribute_value(&args)
-        .expect("Path for route handler not specified"); 
+    let path = get_route_path_attribute_value(&args).expect("Path for route handler not specified");
 
     let expanded = generate_route_handler_tokens(&path, Method::POST, &input_fn);
-    
+
     expanded.into()
 }
 
@@ -117,11 +114,10 @@ pub fn patch(
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
-    let path = get_route_path_attribute_value(&args)
-        .expect("Path for route handler not specified"); 
+    let path = get_route_path_attribute_value(&args).expect("Path for route handler not specified");
 
     let expanded = generate_route_handler_tokens(&path, Method::PATCH, &input_fn);
-    
+
     expanded.into()
 }
 
@@ -191,11 +187,19 @@ pub fn http_server(
     let mut port_lit = None;
 
     for arg in args.iter() {
-        if let NestedMeta::Meta(Meta::NameValue(nv)) = arg {  
-            if let Lit::Str(lit_str) = &nv.lit && nv.path.is_ident("ip") {
-                ip_lit = Some(lit_str.value()); 
-            } else if let Lit::Int(lit_int) = &nv.lit && nv.path.is_ident("port") { 
-                port_lit = Some(lit_int.base10_parse::<u16>().expect("Given invalid port number"))
+        if let NestedMeta::Meta(Meta::NameValue(nv)) = arg {
+            if let Lit::Str(lit_str) = &nv.lit
+                && nv.path.is_ident("ip")
+            {
+                ip_lit = Some(lit_str.value());
+            } else if let Lit::Int(lit_int) = &nv.lit
+                && nv.path.is_ident("port")
+            {
+                port_lit = Some(
+                    lit_int
+                        .base10_parse::<u16>()
+                        .expect("Given invalid port number"),
+                )
             }
         }
     }
@@ -214,7 +218,7 @@ pub fn http_server(
             pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
             ServerConfig, RootCertStore
         };
-        use rcgen::generate_simple_self_signed; 
+        use rcgen::generate_simple_self_signed;
 
         #[tokio::main]
         #sig {
@@ -254,24 +258,31 @@ pub fn http_server(
                     };
 
                     let request = String::from_utf8_lossy(&buffer[..n]).to_string();
-                    let path = utils::request::route::extract_path_from_request(&request).unwrap_or_default(); 
+                    let path = utils::request::route::extract_path_from_request(&request).unwrap_or_default();
 
-                    let mut response = format!(
-                        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Not Found".len(),
-                        "Not Found"
-                    );
+                    // The request target includes the query string; route patterns never do,
+                    // so match against the path only.
+                    let path_without_query = match path.split_once('?') {
+                        Some((path_only, _)) => path_only,
+                        None => path.as_str(),
+                    };
 
-                    let route_path = utils::request::route::get_matching_route_path(&path);
+                    let route_path = utils::request::route::get_matching_route_path(path_without_query);
 
-                    let request_method = 
+                    let request_method =
                         utils::request::route::extract_method_from_request(&request);
 
-                    if let Some(route_path) = route_path 
+                    let response = if let Some(route_path) = route_path
                         && let Ok(method) = request_method
                         && let Ok(Some(route_function)) = utils::request::route::get_route_function(&route_path, method)
-                    { 
-                        response = route_function(&request);
+                    {
+                        route_function(&request)
+                    } else {
+                        format!(
+                            "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                            "Not Found".len(),
+                            "Not Found"
+                        )
                     }
 
                     tls_stream
