@@ -156,7 +156,7 @@ fn extract_method_unsupported_method_returns_err() {
     assert!(extract_method_from_request("CONNECT /users HTTP/1.1").is_err());
 }
 
-// ── register_route / get_route_function / get_matching_route_path ───────
+// ── register_route / get_route_function / path_exists ───────────────────
 
 #[test]
 fn register_and_lookup_exact_route() {
@@ -196,14 +196,26 @@ fn register_and_match_parameterised_route() {
 
     register_route(Method::GET, "/test/{id}/param", handler);
 
-    let matched = get_matching_route_path("/test/42/param");
-    assert_eq!(matched, Some("/test/{id}/param".to_string()));
+    assert!(path_exists("/test/42/param"));
 }
 
 #[test]
-fn get_matching_route_path_no_match_returns_none() {
-    let matched = get_matching_route_path("/definitely/not/registered/ever");
-    assert!(matched.is_none());
+fn path_exists_no_match_returns_false() {
+    assert!(!path_exists("/definitely/not/registered/ever"));
+}
+
+#[test]
+fn path_exists_ignores_the_method_it_was_registered_under() {
+    fn handler(_: &str) -> String {
+        "ok".to_string()
+    }
+
+    register_route(Method::PATCH, "/test/method-agnostic", handler);
+
+    // Registered for PATCH only, but the path itself is served — this is what
+    // separates a 405 from a 404.
+    assert!(path_exists("/test/method-agnostic"));
+    assert!(get_route_function("/test/method-agnostic", Method::GET).unwrap().is_none());
 }
 
 #[test]
