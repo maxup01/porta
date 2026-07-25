@@ -114,8 +114,17 @@ pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: 
             }
 
             quote! {
-                map_with_params.insert(#not_path_param.to_string(),
-                utils::request::request_body::extract_request_body(request).unwrap().to_string());
+                let body = match utils::request::request_body::extract_request_body(request) {
+                    Some(body) => body,
+                    None => {
+                        return format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Bad Request".len(),
+                        "Bad Request"
+                    )}
+                };
+
+                map_with_params.insert(#not_path_param.to_string(), body);
             }
         },
         Method::GET | Method::DELETE => {
@@ -210,7 +219,15 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
             || ty_str == "f64"
         {
             deserialized.push(quote! {
-                let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
+                let param_val_orig = match map_with_params.get(&#arg_str[..]) {
+                    Some(param_val) => param_val.as_str(),
+                    None => {
+                        return format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Bad Request".len(),
+                        "Bad Request"
+                    )}
+                };
                 let #arg_name: #arg_type = match param_val_orig.parse() {
                     Ok(val) => val,
                     Err(_) => {
@@ -223,7 +240,15 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
             });
         } else if ty_str == "bool" {
             deserialized.push(quote! {
-                let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
+                let param_val_orig = match map_with_params.get(&#arg_str[..]) {
+                    Some(param_val) => param_val.as_str(),
+                    None => {
+                        return format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Bad Request".len(),
+                        "Bad Request"
+                    )}
+                };
                 let #arg_name: #arg_type = match param_val_orig {
                     "true" | "1" => true,
                     "false" | "0" => false,
@@ -237,12 +262,28 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
             });
         } else if ty_str == "String" {
             deserialized.push(quote! {
-                let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
+                let param_val_orig = match map_with_params.get(&#arg_str[..]) {
+                    Some(param_val) => param_val.as_str(),
+                    None => {
+                        return format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Bad Request".len(),
+                        "Bad Request"
+                    )}
+                };
                 let #arg_name: #arg_type = param_val_orig.to_string();
             });
         } else {
             deserialized.push(quote! {
-                let param_val_orig = map_with_params.get(&#arg_str[..]).unwrap().as_str();
+                let param_val_orig = match map_with_params.get(&#arg_str[..]) {
+                    Some(param_val) => param_val.as_str(),
+                    None => {
+                        return format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Bad Request".len(),
+                        "Bad Request"
+                    )}
+                };
                 let param_val: &str;
                 let formatted;
 
