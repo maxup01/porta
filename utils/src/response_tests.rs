@@ -275,7 +275,9 @@ fn format_body_is_last_segment() {
 
 #[test]
 fn format_empty_struct_produces_empty_json_object() {
-    let raw = formatted(EmptyBody {}, HttpStatus::NoContent);
+    // Deliberately not 204: that status suppresses the body entirely, which would
+    // make this assert the framing rule rather than the serialization of `{}`.
+    let raw = formatted(EmptyBody {}, HttpStatus::Ok);
     let json_part = raw.split("\r\n\r\n").nth(1).expect("missing body");
     assert_eq!(json_part, "{}");
 }
@@ -339,9 +341,17 @@ fn status_response_status_line_matches_code_and_reason() {
     }
 }
 
+/// Every status except `204`, which is defined to carry no content and so has
+/// neither a body nor the headers describing one.
+fn body_bearing_statuses() -> impl Iterator<Item = HttpStatus> {
+    ALL_STATUSES
+        .into_iter()
+        .filter(|status| *status != HttpStatus::NoContent)
+}
+
 #[test]
 fn status_response_body_is_the_reason_phrase() {
-    for status in ALL_STATUSES {
+    for status in body_bearing_statuses() {
         let raw = status_response(status);
         let (_, body) = split_message(&raw);
 
@@ -351,7 +361,7 @@ fn status_response_body_is_the_reason_phrase() {
 
 #[test]
 fn status_response_content_length_matches_body_byte_length() {
-    for status in ALL_STATUSES {
+    for status in body_bearing_statuses() {
         let raw = status_response(status);
         let (headers, body) = split_message(&raw);
         let expected = format!("Content-Length: {}\r\n", body.len());
@@ -425,6 +435,74 @@ fn status_response_matches_expected_shape_for_server_generated_errors() {
             "unexpected body for {status}: {raw}"
         );
     }
+}
+
+// ── 204 No Content framing ───────────────────────────────────────────────────
+
+#[test]
+fn status_response_204_has_an_empty_body() {
+    let raw = status_response(HttpStatus::NoContent);
+    let (_, body) = split_message(&raw);
+
+    assert_eq!(body, "", "204 must not carry content");
+}
+
+#[test]
+fn status_response_204_omits_content_headers() {
+    let raw = status_response(HttpStatus::NoContent);
+
+    assert!(
+        !raw.contains("Content-Length"),
+        "204 must not describe content it does not have: {raw}"
+    );
+    assert!(
+        !raw.contains("Content-Type"),
+        "204 must not declare a content type: {raw}"
+    );
+}
+
+#[test]
+fn format_response_204_discards_the_serialized_body() {
+    let raw = formatted(simple_body(), HttpStatus::NoContent);
+    let (_, body) = split_message(&raw);
+
+    assert_eq!(body, "", "204 must drop the handler's body");
+    assert!(!raw.contains("hello"), "serialized body leaked into a 204");
+}
+
+#[test]
+fn format_response_204_still_carries_date_and_connection() {
+    let raw = formatted(simple_body(), HttpStatus::NoContent);
+
+    assert!(raw.contains("Date: "), "204 lost its Date header");
+    assert!(
+        raw.contains("Connection: close\r\n"),
+        "204 lost its Connection header"
+    );
+}
+
+// ── Connection handling ──────────────────────────────────────────────────────
+
+#[test]
+fn every_status_response_declares_connection_close() {
+    for status in ALL_STATUSES {
+        let raw = status_response(status);
+
+        assert!(
+            raw.contains("Connection: close\r\n"),
+            "missing Connection: close for {status}"
+        );
+    }
+}
+
+#[test]
+fn format_response_declares_connection_close() {
+    let raw = formatted(simple_body(), HttpStatus::Ok);
+
+    assert!(
+        raw.contains("Connection: close\r\n"),
+        "the server closes after one request but does not say so"
+    );
 }
 
 #[test]
