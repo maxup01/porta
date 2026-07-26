@@ -174,6 +174,9 @@ pub fn patch(
 /// - Requests are read into a fixed 4 KB buffer. Large bodies will be truncated.
 /// - Each connection handles exactly one request (no keep-alive or pipelining).
 /// - TLS handshake failures and write errors cause the spawned task to panic.
+///   This drops that one connection; the accept loop keeps running.
+/// - Failing to bind the address at startup is fatal. Errors from `accept` are not:
+///   they are logged to stderr and retried after a short pause.
 #[proc_macro_attribute]
 pub fn http_server(
     attr: proc_macro::TokenStream,
@@ -251,7 +254,22 @@ pub fn http_server(
                 .expect("Failed to bind address");
 
             loop {
-                let (socket, _) = listener.accept().await.expect("Failed to accept connection");
+                let (socket, _) = match listener.accept().await {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        eprintln!("Failed to accept connection: {}", error);
+
+                        // On descriptor exhaustion the refused connection stays in the
+                        // backlog, so the socket reports readable again immediately and
+                        // an unpaused retry would spin a core until an fd frees.
+                        ::embedded_web_server::tokio::time::sleep(
+                            ::std::time::Duration::from_millis(10)
+                        ).await;
+
+                        continue;
+                    }
+                };
+
                 let acceptor = acceptor.clone();
 
                 ::embedded_web_server::tokio::spawn(async move {
