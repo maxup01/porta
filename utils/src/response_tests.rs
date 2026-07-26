@@ -286,3 +286,154 @@ fn format_vec_body_serializes_as_json_array() {
     let json_part = raw.split("\r\n\r\n").nth(1).expect("missing body");
     assert_eq!(json_part, "[1,2,3]");
 }
+
+// ── status_response ──────────────────────────────────────────────────────────
+
+/// Every status the enum can express, so a new variant that breaks the
+/// invariants below fails a test rather than reaching the wire.
+const ALL_STATUSES: [HttpStatus; 17] = [
+    HttpStatus::Ok,
+    HttpStatus::Created,
+    HttpStatus::Accepted,
+    HttpStatus::NoContent,
+    HttpStatus::MovedPermanently,
+    HttpStatus::BadRequest,
+    HttpStatus::Unauthorized,
+    HttpStatus::Forbidden,
+    HttpStatus::NotFound,
+    HttpStatus::MethodNotAllowed,
+    HttpStatus::Conflict,
+    HttpStatus::PayloadTooLarge,
+    HttpStatus::UnprocessableEntity,
+    HttpStatus::TooManyRequests,
+    HttpStatus::InternalServerError,
+    HttpStatus::ServiceUnavailable,
+    HttpStatus::GatewayTimeout,
+];
+
+/// The four statuses the server generates on its own, without a handler.
+/// These are the responses previously hand-rolled inside `quote!` blocks and
+/// therefore unreachable from any test.
+const SERVER_GENERATED_STATUSES: [HttpStatus; 4] = [
+    HttpStatus::BadRequest,
+    HttpStatus::NotFound,
+    HttpStatus::MethodNotAllowed,
+    HttpStatus::PayloadTooLarge,
+];
+
+fn split_message(raw: &str) -> (&str, &str) {
+    let separator = raw.find("\r\n\r\n").expect("missing header/body separator");
+    (&raw[..separator], &raw[separator + 4..])
+}
+
+#[test]
+fn status_response_status_line_matches_code_and_reason() {
+    for status in ALL_STATUSES {
+        let raw = status_response(status);
+        let expected_line = format!("HTTP/1.1 {} {}\r\n", status as u32, status);
+
+        assert!(
+            raw.starts_with(&expected_line),
+            "bad status line for {status}"
+        );
+    }
+}
+
+#[test]
+fn status_response_body_is_the_reason_phrase() {
+    for status in ALL_STATUSES {
+        let raw = status_response(status);
+        let (_, body) = split_message(&raw);
+
+        assert_eq!(body, status.to_string(), "wrong body for {status}");
+    }
+}
+
+#[test]
+fn status_response_content_length_matches_body_byte_length() {
+    for status in ALL_STATUSES {
+        let raw = status_response(status);
+        let (headers, body) = split_message(&raw);
+        let expected = format!("Content-Length: {}\r\n", body.len());
+
+        assert!(
+            headers.contains(&expected),
+            "Content-Length does not match body length for {status}"
+        );
+    }
+}
+
+#[test]
+fn status_response_uses_text_plain() {
+    let raw = status_response(HttpStatus::BadRequest);
+
+    assert!(
+        raw.contains("Content-Type: text/plain\r\n"),
+        "missing or wrong Content-Type: {raw}"
+    );
+}
+
+#[test]
+fn status_response_contains_date_header() {
+    let raw = status_response(HttpStatus::NotFound);
+
+    assert!(raw.contains("Date: "), "missing Date header");
+    assert!(raw.contains(" GMT\r\n"), "Date header not in GMT");
+}
+
+#[test]
+fn status_response_body_is_the_final_segment() {
+    let raw = status_response(HttpStatus::MethodNotAllowed);
+
+    assert!(
+        raw.ends_with("\r\n\r\nMethod Not Allowed"),
+        "body is not the last segment: {raw}"
+    );
+}
+
+#[test]
+fn status_response_body_contains_no_crlf() {
+    for status in ALL_STATUSES {
+        let raw = status_response(status);
+        let (_, body) = split_message(&raw);
+
+        assert!(
+            !body.contains("\r\n"),
+            "reason phrase for {status} would be read as a header boundary"
+        );
+    }
+}
+
+#[test]
+fn status_response_matches_expected_shape_for_server_generated_errors() {
+    for status in SERVER_GENERATED_STATUSES {
+        let raw = status_response(status);
+        let reason = status.to_string();
+        let expected_prefix = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nDate: ",
+            status as u32,
+            reason,
+            reason.len()
+        );
+
+        assert!(
+            raw.starts_with(&expected_prefix),
+            "unexpected header block for {status}: {raw}"
+        );
+        assert!(
+            raw.ends_with(&format!("\r\n\r\n{reason}")),
+            "unexpected body for {status}: {raw}"
+        );
+    }
+}
+
+#[test]
+fn status_response_and_format_response_share_a_header_set() {
+    let error = status_response(HttpStatus::NotFound);
+    let success = formatted(simple_body(), HttpStatus::Ok);
+
+    for header in ["Content-Type: ", "Content-Length: ", "Date: "] {
+        assert!(error.contains(header), "error response missing {header}");
+        assert!(success.contains(header), "success response missing {header}");
+    }
+}

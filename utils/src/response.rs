@@ -234,16 +234,59 @@ where
     let value = response.body();
     let serialized_value =
         serde_json::to_string(&value).expect("Failed to serialize response to JSON");
+
+    format_http_message(status, "application/json", &serialized_value)
+}
+
+/// Builds a complete HTTP/1.1 message from a status, a content type and an
+/// already-encoded body.
+///
+/// Every response the server emits — successful handler results and error
+/// replies alike — is assembled here, so header set, header order and the
+/// `Content-Length` calculation exist in exactly one place. Adding a header to
+/// this function adds it to every response.
+///
+/// `Content-Length` is `body.len()`, which is a byte count rather than a
+/// character count, as HTTP requires.
+fn format_http_message(status: HttpStatus, content_type: &str, body: &str) -> String {
     let now = Utc::now();
 
     format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nDate: {}\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nDate: {}\r\n\r\n{}",
         status as u32,
         status,
-        serialized_value.len(),
+        content_type,
+        body.len(),
         now.format("%a, %d %b %Y %H:%M:%S GMT"),
-        serialized_value
+        body
     )
+}
+
+/// Builds a `text/plain` HTTP response carrying nothing but a status.
+///
+/// This is the counterpart to [`format_response`] for replies the server
+/// generates itself — a request it could not parse, a route it could not
+/// resolve, a body larger than it will accept — where there is no handler
+/// return value to serialize.
+///
+/// The body is the status's reason phrase, so [`HttpStatus`] is the single
+/// source of the status code, the reason phrase in the status line, and the
+/// body text. None of the three can drift from the others.
+///
+/// # Examples
+///
+/// ```rust
+/// use utils::response::{HttpStatus, status_response};
+///
+/// let raw = status_response(HttpStatus::NotFound);
+///
+/// assert!(raw.starts_with("HTTP/1.1 404 Not Found\r\n"));
+/// assert!(raw.contains("Content-Type: text/plain\r\n"));
+/// assert!(raw.contains("Content-Length: 9\r\n"));
+/// assert!(raw.ends_with("\r\n\r\nNot Found"));
+/// ```
+pub fn status_response(status: HttpStatus) -> String {
+    format_http_message(status, "text/plain", &status.to_string())
 }
 
 #[cfg(test)]
