@@ -197,12 +197,17 @@ where
 /// Content-Type: application/json\r\n
 /// Content-Length: <byte_length>\r\n
 /// Date: <rfc-date>\r\n
+/// Connection: close\r\n
 /// \r\n
 /// <json_body>
 /// ```
 ///
 /// The `Date` header is set to the current UTC time formatted as
 /// `"Tue, 15 Apr 2025 10:00:00 GMT"`.
+///
+/// A `204 No Content` response is the exception: the serialized body is
+/// discarded and the content headers are omitted entirely. See
+/// [`format_http_message`].
 ///
 /// # Panics
 ///
@@ -248,16 +253,35 @@ where
 ///
 /// `Content-Length` is `body.len()`, which is a byte count rather than a
 /// character count, as HTTP requires.
+///
+/// `Connection: close` is sent on every response because the server handles
+/// exactly one request per connection. Without it an HTTP/1.1 client is entitled
+/// to assume the connection persists and will send its next request into a socket
+/// that has already been closed.
+///
+/// # 204 No Content
+///
+/// RFC 9110 §15.3.5 forbids content on a `204`, and a `Content-Length` describing
+/// content that is not there is a framing error. Such a response is therefore
+/// emitted with no body and neither content header, whatever `body` was passed.
 fn format_http_message(status: HttpStatus, content_type: &str, body: &str) -> String {
     let now = Utc::now();
+    let date = now.format("%a, %d %b %Y %H:%M:%S GMT");
+
+    if status == HttpStatus::NoContent {
+        return format!(
+            "HTTP/1.1 {} {}\r\nDate: {}\r\nConnection: close\r\n\r\n",
+            status as u32, status, date
+        );
+    }
 
     format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nDate: {}\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nDate: {}\r\nConnection: close\r\n\r\n{}",
         status as u32,
         status,
         content_type,
         body.len(),
-        now.format("%a, %d %b %Y %H:%M:%S GMT"),
+        date,
         body
     )
 }
