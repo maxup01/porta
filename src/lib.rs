@@ -13,6 +13,10 @@ pub use rustls;
 pub use tokio;
 pub use tokio_rustls;
 
+/// Incremental HTTP request parser used by the generated read loop to decide
+/// when a request's header block is complete and how much body to expect.
+pub use httparse;
+
 /// Registers route handlers at startup; used by the generated `#[ctor::ctor]` fn.
 pub use ctor;
 
