@@ -179,23 +179,49 @@ fn custom_type_wraps_in_quotes_when_not_json_object() {
     assert!(src.contains("starts_with") && src.contains("ends_with"));
 }
 
+// These assert on the *shape* of the emitted tokens, not on the response bytes.
+// The bytes are `utils::response::status_response`'s responsibility and are
+// covered directly in `response_tests.rs`; all that matters here is that the
+// generated code reaches for the right `HttpStatus` variant.
+
 #[test]
 fn numeric_parse_failure_returns_404() {
     let f: ItemFn = parse_quote! { fn h(id: u32) -> String { String::new() } };
     let src = handler_src(f, "/r/{id}", Method::GET);
-    assert!(src.contains("404 Not Found"));
+    assert!(src.contains("status_response") && src.contains("NotFound"));
 }
 
 #[test]
 fn bool_unknown_value_returns_404() {
     let f: ItemFn = parse_quote! { fn h(flag: bool) -> String { String::new() } };
     let src = handler_src(f, "/r/{flag}", Method::GET);
-    assert!(src.contains("404 Not Found"));
+    assert!(src.contains("status_response") && src.contains("NotFound"));
 }
 
 #[test]
 fn serde_failure_returns_404() {
     let f: ItemFn = parse_quote! { fn h(payload: MyDto) -> String { String::new() } };
     let src = handler_src(f, "/r/{payload}", Method::GET);
-    assert!(src.contains("404 Not Found"));
+    assert!(src.contains("status_response") && src.contains("NotFound"));
+}
+
+#[test]
+fn missing_param_returns_400() {
+    let f: ItemFn = parse_quote! { fn h(id: u32) -> String { String::new() } };
+    let src = handler_src(f, "/r/{id}", Method::GET);
+    assert!(src.contains("status_response") && src.contains("BadRequest"));
+}
+
+#[test]
+fn no_response_bytes_are_built_inside_the_macro() {
+    let f: ItemFn = parse_quote! { fn h(id: u32, payload: MyDto) -> String { String::new() } };
+
+    for method in [Method::GET, Method::POST, Method::PATCH, Method::DELETE] {
+        let src = handler_src(f.clone(), "/r/{id}", method);
+
+        assert!(
+            !src.contains("HTTP/1.1"),
+            "generated code hand-rolls a response instead of calling status_response"
+        );
+    }
 }
