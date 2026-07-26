@@ -171,7 +171,16 @@ pub fn patch(
 ///
 /// # Limitations
 ///
-/// - Requests are read into a fixed 4 KB buffer. Large bodies will be truncated.
+/// - Requests are read in 4 KB chunks until the header block parses and the
+///   `Content-Length` body has arrived. A request whose total size exceeds 32 MiB is
+///   answered with `413 Payload Too Large`; a malformed header block or a body that
+///   is not valid UTF-8 is answered with `400 Bad Request`.
+/// - The 32 MiB ceiling is per connection and the number of concurrent connections is
+///   unbounded, so peak memory scales with the number of clients.
+/// - `Transfer-Encoding: chunked` is not supported. A chunked request is dispatched
+///   with an empty body rather than being rejected.
+/// - There is no read timeout. A client that sends a partial header block and then
+///   stalls holds its connection task open indefinitely.
 /// - Each connection handles exactly one request (no keep-alive or pipelining).
 /// - TLS handshake failures and write errors cause the spawned task to panic.
 ///   This drops that one connection; the accept loop keeps running.
@@ -278,21 +287,104 @@ pub fn http_server(
                         .await
                         .expect("TLS handshake failed");
 
+                    const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
+
+                    let bad_request = format!(
+                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Bad Request".len(),
+                        "Bad Request"
+                    );
+                    let payload_too_large = format!(
+                        "HTTP/1.1 413 Payload Too Large\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                        "Payload Too Large".len(),
+                        "Payload Too Large"
+                    );
+
+                    let mut data: ::std::vec::Vec<u8> = ::std::vec::Vec::new();
                     let mut buffer = [0u8; 4096];
-                    let n = match tls_stream.read(&mut buffer).await {
-                        Ok(n) if n == 0 => return,
-                        Ok(n) => n,
-                        Err(_) => return,
+
+                    let (header_len, content_length) = loop {
+                        let n = match tls_stream.read(&mut buffer).await {
+                            Ok(0) => return,
+                            Ok(n) => n,
+                            Err(_) => return,
+                        };
+
+                        data.extend_from_slice(&buffer[..n]);
+
+                        if data.len() > MAX_REQUEST_BYTES {
+                            let _ = tls_stream.write_all(payload_too_large.as_bytes()).await;
+                            return;
+                        }
+
+                        let mut headers = [::embedded_web_server::httparse::EMPTY_HEADER; 32];
+                        let mut parsed_request = ::embedded_web_server::httparse::Request::new(&mut headers);
+
+                        // `parsed_request` borrows `data`, so only Copy values may leave
+                        // this match — the next iteration needs `data` mutable again.
+                        match parsed_request.parse(&data) {
+                            Ok(::embedded_web_server::httparse::Status::Complete(header_len)) => {
+                                // Absent, unparseable or duplicated Content-Length is
+                                // treated as no body. Chunked transfer encoding is not
+                                // supported; such a request is served with an empty body.
+                                let content_length = parsed_request
+                                    .headers
+                                    .iter()
+                                    .find(|header| header.name.eq_ignore_ascii_case("content-length"))
+                                    .and_then(|header| ::std::str::from_utf8(header.value).ok())
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                                    .unwrap_or(0);
+
+                                break (header_len, content_length);
+                            }
+                            Ok(::embedded_web_server::httparse::Status::Partial) => continue,
+                            Err(_) => {
+                                let _ = tls_stream.write_all(bad_request.as_bytes()).await;
+                                return;
+                            }
+                        }
                     };
 
-                    let request = String::from_utf8_lossy(&buffer[..n]).to_string();
+                    // Checked, because Content-Length is attacker-controlled and a value
+                    // near usize::MAX would otherwise wrap into a small total.
+                    let total_len = match header_len.checked_add(content_length) {
+                        Some(total_len) if total_len <= MAX_REQUEST_BYTES => total_len,
+                        _ => {
+                            let _ = tls_stream.write_all(payload_too_large.as_bytes()).await;
+                            return;
+                        }
+                    };
+
+                    while data.len() < total_len {
+                        let n = match tls_stream.read(&mut buffer).await {
+                            // EOF before the declared body arrived: the client hung up
+                            // mid-request, so there is nothing worth answering.
+                            Ok(0) => return,
+                            Ok(n) => n,
+                            Err(_) => return,
+                        };
+
+                        data.extend_from_slice(&buffer[..n]);
+                    }
+
+                    // Anything past Content-Length belongs to a pipelined request, and
+                    // this server answers one request per connection.
+                    data.truncate(total_len);
+
+                    // The request is now complete, so a decoding failure is genuinely
+                    // invalid UTF-8 rather than a multi-byte character split across two
+                    // reads — which is what a lossy decode used to silently corrupt.
+                    let request = match String::from_utf8(data) {
+                        Ok(request) => request,
+                        Err(_) => {
+                            let _ = tls_stream.write_all(bad_request.as_bytes()).await;
+                            return;
+                        }
+                    };
 
                     let response = match ::embedded_web_server::utils::request::route::extract_path_from_request(&request) {
-                        Err(_) => format!(
-                            "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                            "Bad Request".len(),
-                            "Bad Request"
-                        ),
+                        // Moved rather than rebuilt; `bad_request` is not read after this.
+                        Err(_) => bad_request,
                         Ok(path) => {
                             // The request target includes the query string; route patterns
                             // never do, so match against the path only.

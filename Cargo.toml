@@ -16,3 +16,4 @@ ctor = { version = "0.1.0" }
 rustls = { version = "0.23.0" }
 tokio-rustls = { version = "0.26.0" }
 rcgen = { version = "0.13.0" }
+httparse = { version = "1.9.0" }
