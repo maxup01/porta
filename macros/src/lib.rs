@@ -289,15 +289,11 @@ pub fn http_server(
 
                     const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 
-                    let bad_request = format!(
-                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Bad Request".len(),
-                        "Bad Request"
+                    let bad_request = ::embedded_web_server::utils::response::status_response(
+                        ::embedded_web_server::utils::response::HttpStatus::BadRequest
                     );
-                    let payload_too_large = format!(
-                        "HTTP/1.1 413 Payload Too Large\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Payload Too Large".len(),
-                        "Payload Too Large"
+                    let payload_too_large = ::embedded_web_server::utils::response::status_response(
+                        ::embedded_web_server::utils::response::HttpStatus::PayloadTooLarge
                     );
 
                     let mut data: ::std::vec::Vec<u8> = ::std::vec::Vec::new();
@@ -410,16 +406,12 @@ pub fn http_server(
                             if let Some(route_function) = route_function {
                                 route_function(&request)
                             } else if ::embedded_web_server::utils::request::route::path_exists(path_without_query) {
-                                format!(
-                                    "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                                    "Method Not Allowed".len(),
-                                    "Method Not Allowed"
+                                ::embedded_web_server::utils::response::status_response(
+                                    ::embedded_web_server::utils::response::HttpStatus::MethodNotAllowed
                                 )
                             } else {
-                                format!(
-                                    "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                                    "Not Found".len(),
-                                    "Not Found"
+                                ::embedded_web_server::utils::response::status_response(
+                                    ::embedded_web_server::utils::response::HttpStatus::NotFound
                                 )
                             }
                         }

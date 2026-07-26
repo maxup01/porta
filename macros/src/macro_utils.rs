@@ -125,11 +125,9 @@ pub fn generate_route_handler_tokens(
                 let body = match ::embedded_web_server::utils::request::request_body::extract_request_body(request) {
                     Some(body) => body,
                     None => {
-                        return format!(
-                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Bad Request".len(),
-                        "Bad Request"
-                    )}
+                        return ::embedded_web_server::utils::response::status_response(
+                            ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                        )}
                 };
 
                 map_with_params.insert(#not_path_param.to_string(), body);
@@ -151,11 +149,9 @@ pub fn generate_route_handler_tokens(
             let path_from_request = match ::embedded_web_server::utils::request::route::extract_path_from_request(request) {
                 Ok(path_from_request) => path_from_request,
                 Err(_) => {
-                    return format!(
-                    "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                    "Bad Request".len(),
-                    "Bad Request"
-                )}
+                    return ::embedded_web_server::utils::response::status_response(
+                        ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                    )}
             };
 
             // Path params are matched against the route pattern, which has no query string.
@@ -170,11 +166,9 @@ pub fn generate_route_handler_tokens(
             ) {
                 Ok(map_with_params) => map_with_params,
                 Err(_) => {
-                    return format!(
-                    "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                    "Bad Request".len(),
-                    "Bad Request"
-                )}
+                    return ::embedded_web_server::utils::response::status_response(
+                        ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                    )}
             };
 
             #method_related_block
@@ -250,20 +244,16 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
-                        return format!(
-                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Bad Request".len(),
-                        "Bad Request"
-                    )}
+                        return ::embedded_web_server::utils::response::status_response(
+                            ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                        )}
                 };
                 let #arg_name: #arg_type = match param_val_orig.parse() {
                     Ok(val) => val,
                     Err(_) => {
-                        return format!(
-                        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Not Found".len(),
-                        "Not Found"
-                    )}
+                        return ::embedded_web_server::utils::response::status_response(
+                            ::embedded_web_server::utils::response::HttpStatus::NotFound
+                        )}
                 };
             });
         } else if ty_str == "bool" {
@@ -271,21 +261,17 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
-                        return format!(
-                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Bad Request".len(),
-                        "Bad Request"
-                    )}
+                        return ::embedded_web_server::utils::response::status_response(
+                            ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                        )}
                 };
                 let #arg_name: #arg_type = match param_val_orig {
                     "true" | "1" => true,
                     "false" | "0" => false,
                     _ => {
-                        return format!(
-                        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Not Found".len(),
-                        "Not Found"
-                    )}
+                        return ::embedded_web_server::utils::response::status_response(
+                            ::embedded_web_server::utils::response::HttpStatus::NotFound
+                        )}
                 };
             });
         } else if ty_str == "String" {
@@ -293,11 +279,9 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
-                        return format!(
-                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Bad Request".len(),
-                        "Bad Request"
-                    )}
+                        return ::embedded_web_server::utils::response::status_response(
+                            ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                        )}
                 };
                 let #arg_name: #arg_type = param_val_orig.to_string();
             });
@@ -306,11 +290,9 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
-                        return format!(
-                        "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Bad Request".len(),
-                        "Bad Request"
-                    )}
+                        return ::embedded_web_server::utils::response::status_response(
+                            ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                        )}
                 };
                 let param_val: &str;
                 let formatted;
@@ -325,11 +307,9 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let #arg_name: #arg_type = match ::embedded_web_server::serde_json::from_str(param_val) {
                     Ok(val) => val,
                     Err(_) => {
-                        return format!(
-                        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                        "Not Found".len(),
-                        "Not Found"
-                    )}
+                        return ::embedded_web_server::utils::response::status_response(
+                            ::embedded_web_server::utils::response::HttpStatus::NotFound
+                        )}
                 };
             });
         }
