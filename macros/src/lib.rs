@@ -286,39 +286,51 @@ pub fn http_server(
                     };
 
                     let request = String::from_utf8_lossy(&buffer[..n]).to_string();
-                    let path = ::embedded_web_server::utils::request::route::extract_path_from_request(&request).unwrap_or_default();
 
-                    // The request target includes the query string; route patterns never do,
-                    // so match against the path only.
-                    let path_without_query = match path.split_once('?') {
-                        Some((path_only, _)) => path_only,
-                        None => path.as_str(),
-                    };
+                    let response = match ::embedded_web_server::utils::request::route::extract_path_from_request(&request) {
+                        Err(_) => format!(
+                            "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                            "Bad Request".len(),
+                            "Bad Request"
+                        ),
+                        Ok(path) => {
+                            // The request target includes the query string; route patterns
+                            // never do, so match against the path only.
+                            let path_without_query = match path.split_once('?') {
+                                Some((path_only, _)) => path_only,
+                                None => path.as_str(),
+                            };
 
-                    // Fast path: one lookup in this method's own table. An unsupported
-                    // verb (PUT, HEAD, ...) fails to parse and falls through as a miss.
-                    let route_function = match ::embedded_web_server::utils::request::route::extract_method_from_request(&request) {
-                        Ok(method) => ::embedded_web_server::utils::request::route::get_route_function(path_without_query, method)
-                            .ok()
-                            .flatten(),
-                        Err(_) => None,
-                    };
+                            let route_function = match ::embedded_web_server::utils::request::route::extract_method_from_request(
+                                &request
+                            ) {
+                                Ok(method) => {
+                                    ::embedded_web_server::utils::request::route::get_route_function(
+                                        path_without_query,
+                                        method
+                                    )
+                                    .ok()
+                                    .flatten()
+                                },
+                                Err(_) => None,
+                            };
 
-                    let response = if let Some(route_function) = route_function {
-                        route_function(&request)
-                    } else if ::embedded_web_server::utils::request::route::path_exists(path_without_query) {
-                        // The path is served, just not by this verb.
-                        format!(
-                            "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                            "Method Not Allowed".len(),
-                            "Method Not Allowed"
-                        )
-                    } else {
-                        format!(
-                            "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
-                            "Not Found".len(),
-                            "Not Found"
-                        )
+                            if let Some(route_function) = route_function {
+                                route_function(&request)
+                            } else if ::embedded_web_server::utils::request::route::path_exists(path_without_query) {
+                                format!(
+                                    "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                                    "Method Not Allowed".len(),
+                                    "Method Not Allowed"
+                                )
+                            } else {
+                                format!(
+                                    "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                                    "Not Found".len(),
+                                    "Not Found"
+                                )
+                            }
+                        }
                     };
 
                     tls_stream
