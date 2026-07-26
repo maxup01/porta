@@ -1,7 +1,9 @@
 use proc_macro2::TokenStream;
-use quote::{quote, format_ident};
+use quote::{format_ident, quote};
 use std::vec::Vec;
-use syn::{FnArg, ItemFn, Lit, Meta, NestedMeta, Pat, PatType, punctuated::Punctuated, token::Comma};
+use syn::{
+    FnArg, ItemFn, Lit, Meta, NestedMeta, Pat, PatType, punctuated::Punctuated, token::Comma,
+};
 use utils::request::route::Method;
 
 /// Searches the attribute argument list for a `path = "..."` key-value pair
@@ -21,12 +23,10 @@ use utils::request::route::Method;
 /// let path = get_route_path_attribute_value(&args);
 /// assert_eq!(path, Some("/users/{id}".to_string()));
 /// ```
-pub fn get_route_path_attribute_value(
-    args: &[NestedMeta],
-) -> Option<String> {
+pub fn get_route_path_attribute_value(args: &[NestedMeta]) -> Option<String> {
     for arg in args {
-        if let NestedMeta::Meta(Meta::NameValue(nv)) = arg 
-            && nv.path.is_ident("path") 
+        if let NestedMeta::Meta(Meta::NameValue(nv)) = arg
+            && nv.path.is_ident("path")
             && let Lit::Str(lit_str) = &nv.lit
         {
             return Some(lit_str.value());
@@ -51,11 +51,15 @@ pub fn get_route_path_attribute_value(
 /// let pairs = get_input_arg_idents_and_types(&input_fn.sig.inputs);
 /// // pairs == [("id", u32), ("name", String)]
 /// ```
-pub fn get_input_arg_idents_and_types(args: &Punctuated<FnArg, Comma>) -> Vec<(syn::Ident, syn::Type)> {
+pub fn get_input_arg_idents_and_types(
+    args: &Punctuated<FnArg, Comma>,
+) -> Vec<(syn::Ident, syn::Type)> {
     let mut fn_args: Vec<(syn::Ident, syn::Type)> = vec![];
 
     for arg in args {
-        if let FnArg::Typed(PatType { pat, ty, .. }) = arg && let Pat::Ident(pat_ident) = &**pat {
+        if let FnArg::Typed(PatType { pat, ty, .. }) = arg
+            && let Pat::Ident(pat_ident) = &**pat
+        {
             fn_args.push((pat_ident.ident.clone(), (**ty).clone()));
         }
     }
@@ -84,7 +88,11 @@ pub fn get_input_arg_idents_and_types(args: &Punctuated<FnArg, Comma>) -> Vec<(s
 ///
 /// # Returns
 /// A [`TokenStream`] containing the transformed handler function and route registration.
-pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: &ItemFn) -> TokenStream {
+pub fn generate_route_handler_tokens(
+    path: &str,
+    http_method: Method,
+    input_fn: &ItemFn,
+) -> TokenStream {
     let fn_name = &input_fn.sig.ident;
     let fn_block = &input_fn.block;
     let fn_vis = &input_fn.vis;
@@ -98,7 +106,7 @@ pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: 
 
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
-    let method_as_tokens = method_tokens(&http_method); 
+    let method_as_tokens = method_tokens(&http_method);
 
     let method_related_block = match http_method {
         Method::POST | Method::PATCH => {
@@ -126,22 +134,29 @@ pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: 
 
                 map_with_params.insert(#not_path_param.to_string(), body);
             }
-        },
+        }
         Method::GET | Method::DELETE => {
             quote! {
                 let query_params = ::embedded_web_server::utils::request::query::extract_params(path_from_request.as_str());
 
                 if let Some(extracted_query_params) = query_params {
                     map_with_params.extend(extracted_query_params);
-                } 
+                }
             }
         }
     };
 
     let fn_expanded = quote! {
         #fn_vis fn #fn_name(request: &str) -> String {
-            let path_from_request =
-                ::embedded_web_server::utils::request::route::extract_path_from_request(request).unwrap();
+            let path_from_request = match ::embedded_web_server::utils::request::route::extract_path_from_request(request) {
+                Ok(path_from_request) => path_from_request,
+                Err(_) => {
+                    return format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                    "Bad Request".len(),
+                    "Bad Request"
+                )}
+            };
 
             // Path params are matched against the route pattern, which has no query string.
             // `path_from_request` is kept intact for query param extraction below.
@@ -150,9 +165,17 @@ pub fn generate_route_handler_tokens(path: &str, http_method: Method, input_fn: 
                 None => path_from_request.as_str(),
             };
 
-            let mut map_with_params = ::embedded_web_server::utils::request::path_param::extract_path_params(
+            let mut map_with_params = match ::embedded_web_server::utils::request::path_param::extract_path_params(
                 #path, path_without_query
-            ).unwrap();
+            ) {
+                Ok(map_with_params) => map_with_params,
+                Err(_) => {
+                    return format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                    "Bad Request".len(),
+                    "Bad Request"
+                )}
+            };
 
             #method_related_block
 
@@ -182,7 +205,7 @@ fn method_tokens(http_method: &Method) -> TokenStream {
         Method::GET => quote! {GET},
         Method::POST => quote! {POST},
         Method::PATCH => quote! {PATCH},
-        Method::DELETE => quote! {DELETE}
+        Method::DELETE => quote! {DELETE},
     }
 }
 
