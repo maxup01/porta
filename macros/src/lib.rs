@@ -182,8 +182,12 @@ pub fn patch(
 /// - There is no read timeout. A client that sends a partial header block and then
 ///   stalls holds its connection task open indefinitely.
 /// - Each connection handles exactly one request (no keep-alive or pipelining).
-/// - TLS handshake failures and write errors cause the spawned task to panic.
-///   This drops that one connection; the accept loop keeps running.
+/// - TLS handshake failures cause the spawned task to panic. This drops that one
+///   connection; the accept loop keeps running. Write failures no longer panic —
+///   the peer is already gone, so the task returns quietly.
+/// - Every response is followed by a TLS `close_notify` via an explicit `shutdown`,
+///   which flushes rustls' buffered records and marks the stream as ended on purpose
+///   rather than truncated.
 /// - Failing to bind the address at startup is fatal. Errors from `accept` are not:
 ///   they are logged to stderr and retried after a short pause.
 #[proc_macro_attribute]
@@ -309,7 +313,9 @@ pub fn http_server(
                         data.extend_from_slice(&buffer[..n]);
 
                         if data.len() > MAX_REQUEST_BYTES {
-                            let _ = tls_stream.write_all(payload_too_large.as_bytes()).await;
+                            if tls_stream.write_all(payload_too_large.as_bytes()).await.is_ok() {
+                                let _ = tls_stream.shutdown().await;
+                            }
                             return;
                         }
 
@@ -335,7 +341,9 @@ pub fn http_server(
                             }
                             Ok(::embedded_web_server::httparse::Status::Partial) => continue,
                             Err(_) => {
-                                let _ = tls_stream.write_all(bad_request.as_bytes()).await;
+                                if tls_stream.write_all(bad_request.as_bytes()).await.is_ok() {
+                                    let _ = tls_stream.shutdown().await;
+                                }
                                 return;
                             }
                         }
@@ -346,7 +354,9 @@ pub fn http_server(
                     let total_len = match header_len.checked_add(content_length) {
                         Some(total_len) if total_len <= MAX_REQUEST_BYTES => total_len,
                         _ => {
-                            let _ = tls_stream.write_all(payload_too_large.as_bytes()).await;
+                            if tls_stream.write_all(payload_too_large.as_bytes()).await.is_ok() {
+                                let _ = tls_stream.shutdown().await;
+                            }
                             return;
                         }
                     };
@@ -373,7 +383,9 @@ pub fn http_server(
                     let request = match String::from_utf8(data) {
                         Ok(request) => request,
                         Err(_) => {
-                            let _ = tls_stream.write_all(bad_request.as_bytes()).await;
+                            if tls_stream.write_all(bad_request.as_bytes()).await.is_ok() {
+                                let _ = tls_stream.shutdown().await;
+                            }
                             return;
                         }
                     };
@@ -417,10 +429,9 @@ pub fn http_server(
                         }
                     };
 
-                    tls_stream
-                        .write_all(response.as_bytes())
-                        .await
-                        .expect("Failed to write");
+                    if tls_stream.write_all(response.as_bytes()).await.is_ok() {
+                        let _ = tls_stream.shutdown().await;
+                    }
                 });
             }
         }
