@@ -52,6 +52,10 @@ pub enum HttpStatus {
     /// 405 — The HTTP method is not allowed for the targeted resource.
     MethodNotAllowed = 405,
 
+    /// 408 — The client did not produce a complete request within the time the
+    /// server was prepared to wait.
+    RequestTimeout = 408,
+
     /// 409 — The request conflicts with the current state of the server.
     Conflict = 409,
 
@@ -91,6 +95,7 @@ impl fmt::Display for HttpStatus {
             HttpStatus::Forbidden => "Forbidden",
             HttpStatus::NotFound => "Not Found",
             HttpStatus::MethodNotAllowed => "Method Not Allowed",
+            HttpStatus::RequestTimeout => "Request Timeout",
             HttpStatus::Conflict => "Conflict",
             HttpStatus::PayloadTooLarge => "Payload Too Large",
             HttpStatus::UnprocessableEntity => "Unprocessable Entity",

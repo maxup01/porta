@@ -179,12 +179,14 @@ pub fn patch(
 ///   unbounded, so peak memory scales with the number of clients.
 /// - `Transfer-Encoding: chunked` is not supported. A chunked request is dispatched
 ///   with an empty body rather than being rejected.
-/// - There is no read timeout. A client that sends a partial header block and then
-///   stalls holds its connection task open indefinitely.
+/// - A connection has 10 seconds to complete the TLS handshake and 30 seconds to
+///   deliver a whole request. The request budget is a single deadline shared by the
+///   header and body reads, so it cannot be extended by pacing the bytes; expiry is
+///   answered with `408 Request Timeout`. Neither limit is configurable yet.
 /// - Each connection handles exactly one request (no keep-alive or pipelining).
-/// - TLS handshake failures cause the spawned task to panic. This drops that one
-///   connection; the accept loop keeps running. Write failures no longer panic —
-///   the peer is already gone, so the task returns quietly.
+/// - Neither a failed TLS handshake nor a failed write panics. Both mean the peer is
+///   unreachable, so the task drops that one connection and returns; the accept loop
+///   keeps running.
 /// - Every response is followed by a TLS `close_notify` via an explicit `shutdown`,
 ///   which flushes rustls' buffered records and marks the stream as ended on purpose
 ///   rather than truncated.
@@ -306,10 +308,33 @@ pub fn http_server(
                 let acceptor = acceptor.clone();
 
                 ::embedded_web_server::tokio::spawn(async move {
-                    let mut tls_stream = acceptor
-                        .accept(socket)
-                        .await
-                        .expect("TLS handshake failed");
+                    // A peer that opens a socket and never sends a ClientHello would
+                    // otherwise hold this task forever, which is the cheapest way to
+                    // exhaust the process: it costs the client one socket and no data.
+                    const HANDSHAKE_TIMEOUT: ::std::time::Duration =
+                        ::std::time::Duration::from_secs(10);
+
+                    // Budget for the whole request rather than for each read. A per-read
+                    // timeout is reset by a single byte, so a client sending one byte
+                    // before every expiry would stay connected indefinitely.
+                    const REQUEST_TIMEOUT: ::std::time::Duration =
+                        ::std::time::Duration::from_secs(30);
+
+                    let mut tls_stream = match ::embedded_web_server::tokio::time::timeout(
+                        HANDSHAKE_TIMEOUT,
+                        acceptor.accept(socket)
+                    ).await {
+                        Ok(Ok(tls_stream)) => tls_stream,
+                        // A failed or abandoned handshake leaves no encrypted channel to
+                        // answer over, so the connection is dropped without a response.
+                        // This is a routine event on a public network — port scans, plain
+                        // HTTP sent to the TLS port, version mismatches — and must not
+                        // panic.
+                        _ => return,
+                    };
+
+                    let deadline = ::embedded_web_server::tokio::time::Instant::now()
+                        + REQUEST_TIMEOUT;
 
                     const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 
@@ -319,15 +344,31 @@ pub fn http_server(
                     let payload_too_large = ::embedded_web_server::utils::response::status_response(
                         ::embedded_web_server::utils::response::HttpStatus::PayloadTooLarge
                     );
+                    let request_timeout = ::embedded_web_server::utils::response::status_response(
+                        ::embedded_web_server::utils::response::HttpStatus::RequestTimeout
+                    );
 
                     let mut data: ::std::vec::Vec<u8> = ::std::vec::Vec::new();
                     let mut buffer = [0u8; 4096];
 
                     let (header_len, content_length) = loop {
-                        let n = match tls_stream.read(&mut buffer).await {
-                            Ok(0) => return,
-                            Ok(n) => n,
-                            Err(_) => return,
+                        // `timeout_at` rather than `timeout`: every read shares one
+                        // deadline, so the budget covers the request as a whole.
+                        let read = ::embedded_web_server::tokio::time::timeout_at(
+                            deadline,
+                            tls_stream.read(&mut buffer)
+                        ).await;
+
+                        let n = match read {
+                            Err(_) => {
+                                if tls_stream.write_all(request_timeout.as_bytes()).await.is_ok() {
+                                    let _ = tls_stream.shutdown().await;
+                                }
+                                return;
+                            }
+                            Ok(Ok(0)) => return,
+                            Ok(Ok(n)) => n,
+                            Ok(Err(_)) => return,
                         };
 
                         data.extend_from_slice(&buffer[..n]);
@@ -382,12 +423,25 @@ pub fn http_server(
                     };
 
                     while data.len() < total_len {
-                        let n = match tls_stream.read(&mut buffer).await {
+                        // The same deadline as the header loop, so a client cannot buy
+                        // more time by splitting the request across the two phases.
+                        let read = ::embedded_web_server::tokio::time::timeout_at(
+                            deadline,
+                            tls_stream.read(&mut buffer)
+                        ).await;
+
+                        let n = match read {
+                            Err(_) => {
+                                if tls_stream.write_all(request_timeout.as_bytes()).await.is_ok() {
+                                    let _ = tls_stream.shutdown().await;
+                                }
+                                return;
+                            }
                             // EOF before the declared body arrived: the client hung up
                             // mid-request, so there is nothing worth answering.
-                            Ok(0) => return,
-                            Ok(n) => n,
-                            Err(_) => return,
+                            Ok(Ok(0)) => return,
+                            Ok(Ok(n)) => n,
+                            Ok(Err(_)) => return,
                         };
 
                         data.extend_from_slice(&buffer[..n]);
