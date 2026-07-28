@@ -200,7 +200,7 @@ pub fn http_server(
     let sig = &input_fn.sig;
 
     if sig.ident != "main" {
-        panic!("The unsecure_http_server macro can only be applied to the main function.");
+        panic!("The http_server macro can only be applied to the main function.");
     }
 
     let mut ip_lit = None;
