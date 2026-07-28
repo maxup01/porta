@@ -189,7 +189,10 @@ pub fn patch(
 ///   which flushes rustls' buffered records and marks the stream as ended on purpose
 ///   rather than truncated.
 /// - Failing to bind the address at startup is fatal. Errors from `accept` are not:
-///   they are logged to stderr and retried after a short pause.
+///   they are retried after a short pause. Only the first failure in a run is logged,
+///   with a second line on recovery reporting how many followed it — a sustained
+///   failure such as file-descriptor exhaustion would otherwise emit the same message
+///   a hundred times a second for as long as it lasted.
 #[proc_macro_attribute]
 pub fn http_server(
     attr: proc_macro::TokenStream,
@@ -266,11 +269,28 @@ pub fn http_server(
                 .await
                 .expect("Failed to bind address");
 
+            let mut suppressed_accept_errors: u64 = 0;
+
             loop {
                 let (socket, _) = match listener.accept().await {
-                    Ok(connection) => connection,
+                    Ok(connection) => {
+                        if suppressed_accept_errors > 0 {
+                            eprintln!(
+                                "Accepting connections again after {} further failures",
+                                suppressed_accept_errors
+                            );
+
+                            suppressed_accept_errors = 0;
+                        }
+
+                        connection
+                    }
                     Err(error) => {
-                        eprintln!("Failed to accept connection: {}", error);
+                        if suppressed_accept_errors == 0 {
+                            eprintln!("Failed to accept connection: {}", error);
+                        }
+
+                        suppressed_accept_errors += 1;
 
                         // On descriptor exhaustion the refused connection stays in the
                         // backlog, so the socket reports readable again immediately and
