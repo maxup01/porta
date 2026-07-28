@@ -136,12 +136,15 @@ pub fn get_route_handlers_by_method(
 /// of equal specificity (two routes differing only in parameter name) resolve
 /// arbitrarily; registering both is a routing ambiguity on the caller's part.
 ///
-/// Returns `Ok(Some(handler))` if a matching route is found, `Ok(None)` if no pattern
+/// Returns `Some(handler)` if a matching route is found, `None` if no pattern
 /// registered for that method matches the path.
 ///
 /// # Panics
 ///
-/// Panics if the method's route table mutex is poisoned.
+/// Panics if the method's route table mutex is poisoned. That is the only way this
+/// lookup can fail, which is why it returns a bare [`Option`] rather than a
+/// [`Result`] — a `Result` would advertise a recoverable error that cannot occur,
+/// and callers would have to discard it with `.ok()` on every lookup.
 ///
 /// # Examples
 ///
@@ -155,21 +158,17 @@ pub fn get_route_handlers_by_method(
 /// register_route(Method::GET, "/users", handler);
 /// register_route(Method::GET, "/users/{id}", handler);
 ///
-/// let handler = get_route_function("/users?id=42", Method::GET).unwrap();
-/// assert!(handler.is_some());
+/// assert!(get_route_function("/users?id=42", Method::GET).is_some());
 ///
 /// // Concrete paths resolve against parameterised patterns
-/// let handler = get_route_function("/users/42", Method::GET).unwrap();
-/// assert!(handler.is_some());
+/// assert!(get_route_function("/users/42", Method::GET).is_some());
 ///
 /// // The route is registered for GET only
-/// let handler = get_route_function("/users/42", Method::DELETE).unwrap();
-/// assert!(handler.is_none());
+/// assert!(get_route_function("/users/42", Method::DELETE).is_none());
 ///
-/// let handler = get_route_function("/nonexistent", Method::GET).unwrap();
-/// assert!(handler.is_none());
+/// assert!(get_route_function("/nonexistent", Method::GET).is_none());
 /// ```
-pub fn get_route_function(url: &str, method: Method) -> Result<Option<RouteHandler>, Error> {
+pub fn get_route_function(url: &str, method: Method) -> Option<RouteHandler> {
     let path = match url.split_once('?') {
         Some((path, _)) => path,
         None => url,
@@ -183,7 +182,7 @@ pub fn get_route_function(url: &str, method: Method) -> Result<Option<RouteHandl
         .min_by_key(|(route_path, _)| route_path.matches('{').count())
         .map(|(_, handler)| *handler);
 
-    Ok(handler)
+    handler
 }
 
 /// Registers a handler function for the given HTTP method and path.

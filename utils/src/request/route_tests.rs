@@ -166,7 +166,7 @@ fn register_and_lookup_exact_route() {
 
     register_route(Method::GET, "/test/exact", handler);
 
-    let result = get_route_function("/test/exact", Method::GET).unwrap();
+    let result = get_route_function("/test/exact", Method::GET);
     assert!(result.is_some());
 }
 
@@ -178,13 +178,13 @@ fn register_and_lookup_route_with_query_string() {
 
     register_route(Method::POST, "/test/query", handler);
 
-    let result = get_route_function("/test/query?foo=bar", Method::POST).unwrap();
+    let result = get_route_function("/test/query?foo=bar", Method::POST);
     assert!(result.is_some());
 }
 
 #[test]
 fn lookup_unregistered_route_returns_none() {
-    let result = get_route_function("/does/not/exist", Method::GET).unwrap();
+    let result = get_route_function("/does/not/exist", Method::GET);
     assert!(result.is_none());
 }
 
@@ -216,9 +216,7 @@ fn path_exists_ignores_the_method_it_was_registered_under() {
     // separates a 405 from a 404.
     assert!(path_exists("/test/method-agnostic"));
     assert!(
-        get_route_function("/test/method-agnostic", Method::GET)
-            .unwrap()
-            .is_none()
+        get_route_function("/test/method-agnostic", Method::GET).is_none()
     );
 }
 
@@ -230,7 +228,7 @@ fn registered_route_not_found_under_wrong_method() {
 
     register_route(Method::GET, "/test/method-check", handler);
 
-    let result = get_route_function("/test/method-check", Method::DELETE).unwrap();
+    let result = get_route_function("/test/method-check", Method::DELETE);
     assert!(result.is_none());
 }
 
@@ -255,9 +253,7 @@ fn dispatch_handler_found_for_matching_method() {
     register_route(Method::GET, "/dispatch-hit/{id}", handler);
 
     assert!(
-        get_route_function("/dispatch-hit/42", Method::GET)
-            .unwrap()
-            .is_some()
+        get_route_function("/dispatch-hit/42", Method::GET).is_some()
     );
 }
 
@@ -271,9 +267,7 @@ fn dispatch_405_when_path_is_served_by_another_method() {
     register_route(Method::POST, "/dispatch-405/{id}", handler);
 
     assert!(
-        get_route_function("/dispatch-405/42", Method::GET)
-            .unwrap()
-            .is_none(),
+        get_route_function("/dispatch-405/42", Method::GET).is_none(),
         "GET must not resolve a POST-only route"
     );
     assert!(
@@ -286,9 +280,7 @@ fn dispatch_405_when_path_is_served_by_another_method() {
 #[test]
 fn dispatch_404_when_no_method_serves_the_path() {
     assert!(
-        get_route_function("/dispatch-404/nothing/here", Method::GET)
-            .unwrap()
-            .is_none()
+        get_route_function("/dispatch-404/nothing/here", Method::GET).is_none()
     );
     assert!(!path_exists("/dispatch-404/nothing/here"));
 }
@@ -304,9 +296,7 @@ fn dispatch_405_for_every_other_verb() {
 
     for method in [Method::POST, Method::PATCH, Method::DELETE] {
         assert!(
-            get_route_function("/dispatch-verbs/resource", method)
-                .unwrap()
-                .is_none()
+            get_route_function("/dispatch-verbs/resource", method).is_none()
         );
     }
 
@@ -323,9 +313,7 @@ fn dispatch_405_ignores_the_query_string() {
     register_route(Method::DELETE, "/dispatch-query/items", handler);
 
     assert!(
-        get_route_function("/dispatch-query/items?id=5", Method::GET)
-            .unwrap()
-            .is_none()
+        get_route_function("/dispatch-query/items?id=5", Method::GET).is_none()
     );
     assert!(path_exists("/dispatch-query/items"));
 }
@@ -351,14 +339,10 @@ fn both_methods_resolve_when_param_names_differ() {
     register_route(Method::POST, "/regression-names/{user_id}", post_handler);
 
     assert!(
-        get_route_function("/regression-names/42", Method::GET)
-            .unwrap()
-            .is_some()
+        get_route_function("/regression-names/42", Method::GET).is_some()
     );
     assert!(
-        get_route_function("/regression-names/42", Method::POST)
-            .unwrap()
-            .is_some(),
+        get_route_function("/regression-names/42", Method::POST).is_some(),
         "a POST route must not be shadowed by a GET route of the same shape"
     );
 }
@@ -378,7 +362,6 @@ fn literal_segment_wins_over_parameter() {
     register_route(Method::GET, "/regression-specificity/me", literal_handler);
 
     let resolved = get_route_function("/regression-specificity/me", Method::GET)
-        .unwrap()
         .expect("the literal route must be reachable");
 
     assert_eq!(
@@ -389,7 +372,6 @@ fn literal_segment_wins_over_parameter() {
 
     // The parameterised route still serves everything else.
     let resolved = get_route_function("/regression-specificity/42", Method::GET)
-        .unwrap()
         .expect("the parameterised route must still match other values");
 
     assert_eq!(resolved(""), "param");
