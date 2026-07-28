@@ -97,12 +97,12 @@ pub fn extract_path_params(route_path: &str, path: &str) -> Result<HashMap<Strin
     for (route_path_part, path_part) in route_path_parts.into_iter().zip(path_parts.into_iter()) {
         if !route_path_part.starts_with('{') || !route_path_part.ends_with('}') {
             continue;
-        } else if route_path_part != path_part {
-            param_values_as_json.insert(
-                route_path_part[1..(route_path_part.len() - 1)].to_string(),
-                path_part[0..path_part.len()].to_string(),
-            );
         }
+
+        param_values_as_json.insert(
+            route_path_part[1..(route_path_part.len() - 1)].to_string(),
+            path_part[0..path_part.len()].to_string(),
+        );
     }
 
     Ok(param_values_as_json)
