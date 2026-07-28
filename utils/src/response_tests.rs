@@ -35,6 +35,7 @@ fn status_numeric_values_are_correct() {
     assert_eq!(HttpStatus::Forbidden as u32, 403);
     assert_eq!(HttpStatus::NotFound as u32, 404);
     assert_eq!(HttpStatus::MethodNotAllowed as u32, 405);
+    assert_eq!(HttpStatus::RequestTimeout as u32, 408);
     assert_eq!(HttpStatus::Conflict as u32, 409);
     assert_eq!(HttpStatus::PayloadTooLarge as u32, 413);
     assert_eq!(HttpStatus::UnprocessableEntity as u32, 422);
@@ -57,6 +58,7 @@ fn status_display_reason_phrases_are_correct() {
         (HttpStatus::Forbidden, "Forbidden"),
         (HttpStatus::NotFound, "Not Found"),
         (HttpStatus::MethodNotAllowed, "Method Not Allowed"),
+        (HttpStatus::RequestTimeout, "Request Timeout"),
         (HttpStatus::Conflict, "Conflict"),
         (HttpStatus::PayloadTooLarge, "Payload Too Large"),
         (HttpStatus::UnprocessableEntity, "Unprocessable Entity"),
@@ -185,6 +187,7 @@ fn format_all_status_codes_appear_in_status_line() {
         HttpStatus::Forbidden,
         HttpStatus::NotFound,
         HttpStatus::MethodNotAllowed,
+        HttpStatus::RequestTimeout,
         HttpStatus::Conflict,
         HttpStatus::PayloadTooLarge,
         HttpStatus::UnprocessableEntity,
@@ -293,7 +296,7 @@ fn format_vec_body_serializes_as_json_array() {
 
 /// Every status the enum can express, so a new variant that breaks the
 /// invariants below fails a test rather than reaching the wire.
-const ALL_STATUSES: [HttpStatus; 17] = [
+const ALL_STATUSES: [HttpStatus; 18] = [
     HttpStatus::Ok,
     HttpStatus::Created,
     HttpStatus::Accepted,
@@ -304,6 +307,7 @@ const ALL_STATUSES: [HttpStatus; 17] = [
     HttpStatus::Forbidden,
     HttpStatus::NotFound,
     HttpStatus::MethodNotAllowed,
+    HttpStatus::RequestTimeout,
     HttpStatus::Conflict,
     HttpStatus::PayloadTooLarge,
     HttpStatus::UnprocessableEntity,
@@ -316,10 +320,11 @@ const ALL_STATUSES: [HttpStatus; 17] = [
 /// The four statuses the server generates on its own, without a handler.
 /// These are the responses previously hand-rolled inside `quote!` blocks and
 /// therefore unreachable from any test.
-const SERVER_GENERATED_STATUSES: [HttpStatus; 4] = [
+const SERVER_GENERATED_STATUSES: [HttpStatus; 5] = [
     HttpStatus::BadRequest,
     HttpStatus::NotFound,
     HttpStatus::MethodNotAllowed,
+    HttpStatus::RequestTimeout,
     HttpStatus::PayloadTooLarge,
 ];
 
