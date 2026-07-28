@@ -36,13 +36,6 @@ static DELETE_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock:
     Mutex::new(m)
 });
 
-/// Lazily initialized, thread-safe list of all registered route paths across all HTTP methods.
-/// Used for introspection, validation, or generating route listings (e.g. a health/debug endpoint).
-static PATHS: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| {
-    let m = Vec::new();
-    Mutex::new(m)
-});
-
 /// Enum representing http methods
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Method {
@@ -187,13 +180,15 @@ pub fn get_route_function(url: &str, method: Method) -> Option<RouteHandler> {
 
 /// Registers a handler function for the given HTTP method and path.
 ///
-/// The path is added to the global [`PATHS`] list and the handler is inserted into
-/// the corresponding method's route table, making it available for dispatch on
-/// incoming requests.
+/// The handler is inserted into the corresponding method's route table, making it
+/// available for dispatch on incoming requests. That table is the only place a route
+/// is recorded, so there is no second list that can fall out of step with it.
+///
+/// Registering the same method and path twice replaces the earlier handler.
 ///
 /// # Panics
 ///
-/// Panics if either the method's route table mutex or the [`PATHS`] mutex is poisoned.
+/// Panics if the method's route table mutex is poisoned.
 ///
 /// # Examples
 ///
@@ -208,8 +203,6 @@ pub fn get_route_function(url: &str, method: Method) -> Option<RouteHandler> {
 /// ```
 pub fn register_route(method: Method, path: &str, function: RouteHandler) {
     let mut route_handlers = get_route_handlers_by_method(method).lock().unwrap();
-
-    PATHS.lock().unwrap().push(path.to_string());
 
     route_handlers.insert(path.to_string(), function);
 }
@@ -302,19 +295,26 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
 /// is what this split is designed to prevent. Returning a `bool` rather than the
 /// matched pattern makes that misuse impossible to express.
 ///
-/// Note that [`PATHS`] stores route *patterns*, so this is a structural match via
-/// [`is_path_matching_route_path`] and not a containment check: the concrete path
-/// `/users/42` matches the registered pattern `/users/{id}`.
+/// The answer comes from probing each method's own route table through
+/// [`get_route_function`], so the four tables are the only record of what is
+/// registered. There is no derived list to keep in step with them, and none to
+/// accumulate a duplicate entry each time a path is registered for another method.
+///
+/// Matching is structural, not exact: the concrete path `/users/42` is served by the
+/// registered pattern `/users/{id}`.
+///
+/// The scan stops at the first method that serves the path, so a `GET` route is
+/// confirmed without locking the other three tables.
 ///
 /// # Caveats
 ///
 /// This answers only *whether* some method serves the path, never *which*. Building an
-/// RFC 9110 `Allow` header requires probing each method's table via
-/// [`get_route_function`] instead.
+/// RFC 9110 `Allow` header means collecting the matching methods rather than
+/// short-circuiting on the first.
 ///
 /// # Panics
 ///
-/// Panics if the [`PATHS`] mutex is poisoned.
+/// Panics if a route table mutex is poisoned.
 ///
 /// # Examples
 ///
@@ -332,11 +332,9 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
 /// assert!(!path_exists("/nonexistent"));
 /// ```
 pub fn path_exists(path: &str) -> bool {
-    PATHS
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|route_path| is_path_matching_route_path(path, route_path))
+    [Method::GET, Method::POST, Method::PATCH, Method::DELETE]
+        .into_iter()
+        .any(|method| get_route_function(path, method).is_some())
 }
 
 /// Extracts and parses the HTTP method from a raw HTTP request line.
