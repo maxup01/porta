@@ -409,8 +409,6 @@ pub fn http_server(
                                         path_without_query,
                                         method
                                     )
-                                    .ok()
-                                    .flatten()
                                 },
                                 Err(_) => None,
                             };
