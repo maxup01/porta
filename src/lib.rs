@@ -7,24 +7,67 @@
 //! than requiring users to add each one to their own `Cargo.toml`.
 //!
 //! None of these are unused — removing one breaks macro expansion downstream.
+//!
+//! # Public API versus macro plumbing
+//!
+//! The API is five attribute macros plus [`HttpResponse`] and [`HttpStatus`], and
+//! that is all — which is the shape the crate promises: write a function, annotate
+//! it. Everything else is `#[doc(hidden)]`: it exists so that generated code has
+//! somewhere to resolve, and hiding it keeps other crates' version numbers out of
+//! this crate's.
+//!
+//! A `pub use` of a third-party crate makes that crate's semver this crate's
+//! semver: `rustls`, `rcgen` and `tokio-rustls` are all `0.x`, where a minor bump
+//! is a breaking change, so a visible re-export would force a breaking release of
+//! `embedded_web_server` every time one of them moved. It would also let a
+//! downstream crate depend on, say, `embedded_web_server::rustls::ServerConfig`
+//! while also depending on `rustls` directly at an incompatible version — two
+//! distinct types with the same name, and error messages to match.
+//!
+//! `#[doc(hidden)]` is the convention for "this is reachable but not API", and
+//! tooling such as `cargo-semver-checks` excludes hidden items from public API
+//! comparisons. Nothing here is intended to be named by hand.
 
+#[doc(hidden)]
 pub use rcgen;
+
+#[doc(hidden)]
 pub use rustls;
+
+#[doc(hidden)]
 pub use tokio;
+
+#[doc(hidden)]
 pub use tokio_rustls;
 
 /// Incremental HTTP request parser used by the generated read loop to decide
 /// when a request's header block is complete and how much body to expect.
+#[doc(hidden)]
 pub use httparse;
 
 /// Registers route handlers at startup; used by the generated `#[ctor::ctor]` fn.
+#[doc(hidden)]
 pub use ctor;
 
 /// Deserializes non-primitive handler arguments in the generated code.
+#[doc(hidden)]
 pub use serde_json;
 
 /// Request parsing, routing table and response formatting used by every handler.
+///
+/// Hidden for the same reason as the crates above — generated code names it, users
+/// should not. The contents are re-exported below under paths meant to be written
+/// by hand.
+#[doc(hidden)]
 pub use utils;
 
+/// The `#[get]`, `#[post]`, `#[patch]`, `#[delete]` and `#[http_server]` attributes.
 pub use macros::*;
-pub use utils::*;
+
+/// The two types every handler signature mentions.
+///
+/// These are the whole of the non-macro API. The `request` module is machinery the
+/// generated code calls — route registration, path and query parsing — and the rest
+/// of `response` is the formatting that turns a handler's return value into bytes.
+/// Neither is meant to be named by hand, so neither is re-exported.
+pub use utils::response::{HttpResponse, HttpStatus};
