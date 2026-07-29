@@ -29,6 +29,13 @@ static PATCH_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::
     Mutex::new(m)
 });
 
+/// Lazily initialized, thread-safe map of PUT route paths to their handler functions.
+/// Populated at startup via route registration and consulted on each incoming PUT request.
+static PUT_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
+    let m = HashMap::new();
+    Mutex::new(m)
+});
+
 /// Lazily initialized, thread-safe map of DELETE route paths to their handler functions.
 /// Populated at startup via route registration and consulted on each incoming DELETE request.
 static DELETE_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
@@ -41,6 +48,7 @@ static DELETE_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock:
 pub enum Method {
     GET,
     POST,
+    PUT,
     PATCH,
     DELETE,
 }
@@ -73,6 +81,7 @@ impl FromStr for Method {
         match s.to_uppercase().as_str() {
             "GET" => Ok(Method::GET),
             "POST" => Ok(Method::POST),
+            "PUT" => Ok(Method::PUT),
             "PATCH" => Ok(Method::PATCH),
             "DELETE" => Ok(Method::DELETE),
             _ => Err(Error::InvalidData(
@@ -109,6 +118,7 @@ pub fn get_route_handlers_by_method(
     match method {
         Method::GET => &GET_ROUTES,
         Method::POST => &POST_ROUTES,
+        Method::PUT => &PUT_ROUTES,
         Method::PATCH => &PATCH_ROUTES,
         Method::DELETE => &DELETE_ROUTES,
     }
@@ -330,9 +340,18 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
 /// assert!(!path_exists("/nonexistent"));
 /// ```
 pub fn path_exists(path: &str) -> bool {
-    [Method::GET, Method::POST, Method::PATCH, Method::DELETE]
-        .into_iter()
-        .any(|method| get_route_function(path, method).is_some())
+    // Every method that owns a route table. A variant missing from this list is
+    // invisible here, so a path served only by that method would answer `404`
+    // instead of `405`.
+    [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+    ]
+    .into_iter()
+    .any(|method| get_route_function(path, method).is_some())
 }
 
 /// Extracts and parses the HTTP method from a raw HTTP request line.

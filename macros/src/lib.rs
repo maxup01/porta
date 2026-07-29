@@ -91,6 +91,40 @@ pub fn post(
     expanded.into()
 }
 
+/// Registers the annotated function as a handler for HTTP `PUT` requests at the given path.
+///
+/// # Arguments
+///
+/// - `path` — the route path to match, as a string literal (e.g. `"/users/{id}"`)
+///
+/// The `path` argument is required. Omitting it causes a compile-time panic.
+///
+/// # Body binding
+///
+/// Like [`post`] and [`patch`], the request body is bound to the single argument that
+/// is not a path parameter. `PUT` replaces a resource outright where `PATCH` amends
+/// one; the difference is semantic, and this crate binds both identically.
+///
+/// # See also
+///
+/// - [`patch`] — the equivalent macro for partial updates
+/// - [`generate_route_handler_tokens`] — generates the registration code for the resolved handler
+/// - [`get_route_path_attribute_value`] — extracts the `path` value from the macro arguments
+#[proc_macro_attribute]
+pub fn put(
+    args: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    let args = parse_macro_input!(args as AttributeArgs);
+    let input_fn = parse_macro_input!(input as ItemFn);
+
+    let path = get_route_path_attribute_value(&args).expect("Path for route handler not specified");
+
+    let expanded = generate_route_handler_tokens(&path, Method::PUT, &input_fn);
+
+    expanded.into()
+}
+
 /// Registers the annotated function as a handler for HTTP `PATCH` requests at the given path.
 ///
 /// # Arguments

@@ -6,7 +6,7 @@
 
 ## Features
 
-- **Attribute-macro routing** — `#[get]`, `#[post]`, `#[patch]`, `#[delete]` register handlers at compile time.
+- **Attribute-macro routing** — `#[get]`, `#[post]`, `#[put]`, `#[patch]`, `#[delete]` register handlers at compile time.
 - **Zero-boilerplate startup** — `#[http_server]` rewrites `main` into a full async TLS server.
 - **Automatic parameter binding** — path params, query params, and JSON bodies are parsed and deserialized straight into your function arguments.
 - **Typed responses** — return an `HttpResponse<T>` with a strongly-typed `HttpStatus`; serialization and HTTP formatting are handled for you.
@@ -67,7 +67,7 @@ curl -k -X POST https://127.0.0.1:8443/something/42 \
 
 ## Public API
 
-`use embedded_web_server::*;` brings in everything you need: the five attribute macros, plus `HttpResponse` and `HttpStatus`.
+`use embedded_web_server::*;` brings in everything you need: the six attribute macros, plus `HttpResponse` and `HttpStatus`.
 
 That is the entire surface. The crate also re-exports `tokio`, `rustls`, `rcgen`, `tokio-rustls`, `ctor`, `serde_json` and the internal `utils` and `server` crates, but all of them are `#[doc(hidden)]` — they exist only so that macro-generated code has somewhere to resolve. They are not covered by this crate's semantic versioning, and naming them by hand means opting out of that guarantee.
 
@@ -79,10 +79,11 @@ Each macro takes a required `path` argument and registers the annotated function
 |-------|--------|---------|
 | `#[get(path = "...")]`    | GET    | `#[get(path = "/users/{id}")]` |
 | `#[post(path = "...")]`   | POST   | `#[post(path = "/users")]` |
+| `#[put(path = "...")]`    | PUT    | `#[put(path = "/users/{id}")]` |
 | `#[patch(path = "...")]`  | PATCH  | `#[patch(path = "/users/{id}")]` |
 | `#[delete(path = "...")]` | DELETE | `#[delete(path = "/users/{id}")]` |
 
-`PUT`, `HEAD` and `OPTIONS` are not supported.
+`HEAD` and `OPTIONS` are not supported.
 
 ### Parameter binding
 
@@ -90,7 +91,7 @@ Function arguments are filled automatically by name:
 
 - **Path parameters** (`{id}`) are matched from the URL.
 - **Query parameters** (`?key=value`) are merged in for `GET` and `DELETE`.
-- **Request body** is bound to the single non-path argument for `POST` and `PATCH`.
+- **Request body** is bound to the single non-path argument for `POST`, `PUT` and `PATCH`.
 
 Query parameters are merged *after* path parameters, so when both supply a name, the query string wins: `GET /users/7?id=9` binds `id = 9`.
 
