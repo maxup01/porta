@@ -17,6 +17,7 @@ fn method_from_str_uppercase() {
 fn method_from_str_lowercase() {
     assert!(matches!(Method::from_str("get").unwrap(), Method::GET));
     assert!(matches!(Method::from_str("post").unwrap(), Method::POST));
+    assert!(matches!(Method::from_str("put").unwrap(), Method::PUT));
     assert!(matches!(Method::from_str("patch").unwrap(), Method::PATCH));
     assert!(matches!(
         Method::from_str("delete").unwrap(),
@@ -34,7 +35,7 @@ fn method_from_str_mixed_case() {
 fn method_from_str_unsupported_returns_err() {
     assert!(Method::from_str("CONNECT").is_err());
     assert!(Method::from_str("OPTIONS").is_err());
-    assert!(Method::from_str("PUT").is_err());
+    assert!(Method::from_str("HEAD").is_err());
     assert!(Method::from_str("").is_err());
 }
 
@@ -294,7 +295,7 @@ fn dispatch_405_for_every_other_verb() {
 
     register_route(Method::GET, "/dispatch-verbs/resource", handler);
 
-    for method in [Method::POST, Method::PATCH, Method::DELETE] {
+    for method in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
         assert!(
             get_route_function("/dispatch-verbs/resource", method).is_none()
         );

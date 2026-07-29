@@ -109,7 +109,9 @@ pub fn generate_route_handler_tokens(
     let method_as_tokens = method_tokens(&http_method);
 
     let method_related_block = match http_method {
-        Method::POST | Method::PATCH => {
+        // The verbs that carry a body. PUT replaces a resource where PATCH amends
+        // one, but both bind the request body the same way.
+        Method::POST | Method::PUT | Method::PATCH => {
             let mut not_path_param: String = String::new();
 
             for (arg_name, _) in &fn_args {
@@ -198,6 +200,7 @@ fn method_tokens(http_method: &Method) -> TokenStream {
     match http_method {
         Method::GET => quote! {GET},
         Method::POST => quote! {POST},
+        Method::PUT => quote! {PUT},
         Method::PATCH => quote! {PATCH},
         Method::DELETE => quote! {DELETE},
     }
