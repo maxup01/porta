@@ -4,16 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["macros", "error", "utils"]
+members = ["macros", "error", "utils", "server"]
 
 [dependencies]
 tokio = { version = "1.52.0", features = ["full"] }
 macros = { path = "./macros" }
 utils = { path = "./utils" }
+server = { path = "./server" }
 serde = { version = "1.0.0", features = ["derive"] }
 serde_json = { version = "1.0.0" }
 ctor = { version = "0.1.0" }
 rustls = { version = "0.23.0" }
 tokio-rustls = { version = "0.26.0" }
 rcgen = { version = "0.13.0" }
-httparse = { version = "1.9.0" }

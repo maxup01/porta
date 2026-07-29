@@ -244,10 +244,6 @@ pub fn http_server(
         // crate-root re-exports.
         #[::embedded_web_server::tokio::main(crate = "::embedded_web_server::tokio")]
         #sig {
-            // Trait methods can't be called through an absolute path, so these two are
-            // imported at function scope rather than into the caller's module.
-            use ::embedded_web_server::tokio::io::{AsyncReadExt, AsyncWriteExt};
-
             let subject_alt_names = vec!["embedded-http-server-rs".to_string(), #ip_str.to_string()];
             let cert = ::embedded_web_server::rcgen::generate_simple_self_signed(subject_alt_names)
                 .expect("Failed to generate self-signed certificate");
@@ -345,12 +341,6 @@ pub fn http_server(
                     const HANDSHAKE_TIMEOUT: ::std::time::Duration =
                         ::std::time::Duration::from_secs(10);
 
-                    // Budget for the whole request rather than for each read. A per-read
-                    // timeout is reset by a single byte, so a client sending one byte
-                    // before every expiry would stay connected indefinitely.
-                    const REQUEST_TIMEOUT: ::std::time::Duration =
-                        ::std::time::Duration::from_secs(30);
-
                     let mut tls_stream = match ::embedded_web_server::tokio::time::timeout(
                         HANDSHAKE_TIMEOUT,
                         acceptor.accept(socket)
@@ -364,177 +354,15 @@ pub fn http_server(
                         _ => return,
                     };
 
-                    let deadline = ::embedded_web_server::tokio::time::Instant::now()
-                        + REQUEST_TIMEOUT;
-
-                    const MAX_REQUEST_BYTES: usize = 1024 * 1024;
-
-                    let bad_request = ::embedded_web_server::utils::response::status_response(
-                        ::embedded_web_server::utils::response::HttpStatus::BadRequest
-                    );
-                    let payload_too_large = ::embedded_web_server::utils::response::status_response(
-                        ::embedded_web_server::utils::response::HttpStatus::PayloadTooLarge
-                    );
-                    let request_timeout = ::embedded_web_server::utils::response::status_response(
-                        ::embedded_web_server::utils::response::HttpStatus::RequestTimeout
-                    );
-
-                    let mut data: ::std::vec::Vec<u8> = ::std::vec::Vec::new();
-                    let mut buffer = [0u8; 4096];
-
-                    let (header_len, content_length) = loop {
-                        // `timeout_at` rather than `timeout`: every read shares one
-                        // deadline, so the budget covers the request as a whole.
-                        let read = ::embedded_web_server::tokio::time::timeout_at(
-                            deadline,
-                            tls_stream.read(&mut buffer)
-                        ).await;
-
-                        let n = match read {
-                            Err(_) => {
-                                if tls_stream.write_all(request_timeout.as_bytes()).await.is_ok() {
-                                    let _ = tls_stream.shutdown().await;
-                                }
-                                return;
-                            }
-                            Ok(Ok(0)) => return,
-                            Ok(Ok(n)) => n,
-                            Ok(Err(_)) => return,
-                        };
-
-                        data.extend_from_slice(&buffer[..n]);
-
-                        if data.len() > MAX_REQUEST_BYTES {
-                            if tls_stream.write_all(payload_too_large.as_bytes()).await.is_ok() {
-                                let _ = tls_stream.shutdown().await;
-                            }
-                            return;
-                        }
-
-                        let mut headers = [::embedded_web_server::httparse::EMPTY_HEADER; 32];
-                        let mut parsed_request = ::embedded_web_server::httparse::Request::new(&mut headers);
-
-                        // `parsed_request` borrows `data`, so only Copy values may leave
-                        // this match — the next iteration needs `data` mutable again.
-                        match parsed_request.parse(&data) {
-                            Ok(::embedded_web_server::httparse::Status::Complete(header_len)) => {
-                                // Absent, unparseable or duplicated Content-Length is
-                                // treated as no body. Chunked transfer encoding is not
-                                // supported; such a request is served with an empty body.
-                                let content_length = parsed_request
-                                    .headers
-                                    .iter()
-                                    .find(|header| header.name.eq_ignore_ascii_case("content-length"))
-                                    .and_then(|header| ::std::str::from_utf8(header.value).ok())
-                                    .and_then(|value| value.trim().parse::<usize>().ok())
-                                    .unwrap_or(0);
-
-                                break (header_len, content_length);
-                            }
-                            Ok(::embedded_web_server::httparse::Status::Partial) => continue,
-                            Err(_) => {
-                                if tls_stream.write_all(bad_request.as_bytes()).await.is_ok() {
-                                    let _ = tls_stream.shutdown().await;
-                                }
-                                return;
-                            }
-                        }
-                    };
-
-                    // Checked, because Content-Length is attacker-controlled and a value
-                    // near usize::MAX would otherwise wrap into a small total.
-                    let total_len = match header_len.checked_add(content_length) {
-                        Some(total_len) if total_len <= MAX_REQUEST_BYTES => total_len,
-                        _ => {
-                            if tls_stream.write_all(payload_too_large.as_bytes()).await.is_ok() {
-                                let _ = tls_stream.shutdown().await;
-                            }
-                            return;
-                        }
-                    };
-
-                    while data.len() < total_len {
-                        // The same deadline as the header loop, so a client cannot buy
-                        // more time by splitting the request across the two phases.
-                        let read = ::embedded_web_server::tokio::time::timeout_at(
-                            deadline,
-                            tls_stream.read(&mut buffer)
-                        ).await;
-
-                        let n = match read {
-                            Err(_) => {
-                                if tls_stream.write_all(request_timeout.as_bytes()).await.is_ok() {
-                                    let _ = tls_stream.shutdown().await;
-                                }
-                                return;
-                            }
-                            // EOF before the declared body arrived: the client hung up
-                            // mid-request, so there is nothing worth answering.
-                            Ok(Ok(0)) => return,
-                            Ok(Ok(n)) => n,
-                            Ok(Err(_)) => return,
-                        };
-
-                        data.extend_from_slice(&buffer[..n]);
-                    }
-
-                    // Anything past Content-Length belongs to a pipelined request, and
-                    // this server answers one request per connection.
-                    data.truncate(total_len);
-
-                    // The request is now complete, so a decoding failure is genuinely
-                    // invalid UTF-8 rather than a multi-byte character split across two
-                    // reads — which is what a lossy decode used to silently corrupt.
-                    let request = match String::from_utf8(data) {
-                        Ok(request) => request,
-                        Err(_) => {
-                            if tls_stream.write_all(bad_request.as_bytes()).await.is_ok() {
-                                let _ = tls_stream.shutdown().await;
-                            }
-                            return;
-                        }
-                    };
-
-                    let response = match ::embedded_web_server::utils::request::route::extract_path_from_request(&request) {
-                        // Moved rather than rebuilt; `bad_request` is not read after this.
-                        Err(_) => bad_request,
-                        Ok(path) => {
-                            // The request target includes the query string; route patterns
-                            // never do, so match against the path only.
-                            let path_without_query = match path.split_once('?') {
-                                Some((path_only, _)) => path_only,
-                                None => path.as_str(),
-                            };
-
-                            let route_function = match ::embedded_web_server::utils::request::route::extract_method_from_request(
-                                &request
-                            ) {
-                                Ok(method) => {
-                                    ::embedded_web_server::utils::request::route::get_route_function(
-                                        path_without_query,
-                                        method
-                                    )
-                                },
-                                Err(_) => None,
-                            };
-
-                            if let Some(route_function) = route_function {
-                                route_function(&request)
-                            } else if ::embedded_web_server::utils::request::route::path_exists(path_without_query) {
-                                ::embedded_web_server::utils::response::status_response(
-                                    ::embedded_web_server::utils::response::HttpStatus::MethodNotAllowed
-                                )
-                            } else {
-                                ::embedded_web_server::utils::response::status_response(
-                                    ::embedded_web_server::utils::response::HttpStatus::NotFound
-                                )
-                            }
-                        }
-                    };
-
-                    if tls_stream.write_all(response.as_bytes()).await.is_ok() {
-                        let _ = tls_stream.shutdown().await;
-                    }
+                    // Reading the request, enforcing the size ceiling and the deadline,
+                    // routing it and writing the answer all live in `server`, as
+                    // ordinary code this workspace can call and test. Emitting them
+                    // here would put them in the caller's crate, where no test of ours
+                    // can reach them.
+                    ::embedded_web_server::server::handle_connection(
+                        &mut tls_stream,
+                        ::embedded_web_server::server::Limits::default()
+                    ).await;
                 });
             }
         }
