@@ -28,17 +28,17 @@ import { BASE_URL, BASE_OPTIONS, timingSummary } from './config.js';
 const TARGET = `${BASE_URL}/`;
 
 export const options = {
-  ...BASE_OPTIONS,
-  vus: 1,
-  duration: '30s',
+        ...BASE_OPTIONS,
+        vus: 1,
+        duration: '30s',
 
-  // No latency thresholds. A number tight enough to be meaningful on this machine
-  // would fail on another, and the comparison that matters is against a run taken
-  // on the same hardware in the same sitting. Correctness thresholds only.
-  thresholds: {
-    http_req_failed: ['rate==0.0'],
-    checks: ['rate==1.0'],
-  },
+        // No latency thresholds. A number tight enough to be meaningful on this machine
+        // would fail on another, and the comparison that matters is against a run taken
+        // on the same hardware in the same sitting. Correctness thresholds only.
+        thresholds: {
+                http_req_failed: ['rate==0.0'],
+                checks: ['rate==1.0'],
+        },
 };
 
 // k6 already separates handshake from server time in its built-in sub-metrics.
@@ -47,38 +47,38 @@ export const options = {
 const handshakeShare = new Trend('handshake_share_percent');
 const serverShare = new Trend('server_share_percent');
 
-export default function () {
-  const response = http.get(TARGET);
+export default function() {
+        const response = http.get(TARGET);
 
-  check(response, {
-    'floor route answers 200': (r) => r.status === 200,
-  });
+        check(response, {
+                'floor route answers 200': (r) => r.status === 200,
+        });
 
-  const total = response.timings.duration;
+        const total = response.timings.duration;
 
-  // Guard against a zero total, which happens on the occasional sub-microsecond
-  // loopback response and would otherwise produce Infinity in the trend.
-  if (total > 0) {
-    handshakeShare.add((response.timings.tls_handshaking / total) * 100);
-    serverShare.add((response.timings.waiting / total) * 100);
-  }
+        // Guard against a zero total, which happens on the occasional sub-microsecond
+        // loopback response and would otherwise produce Infinity in the trend.
+        if (total > 0) {
+                handshakeShare.add((response.timings.tls_handshaking / total) * 100);
+                serverShare.add((response.timings.waiting / total) * 100);
+        }
 }
 
 export function setup() {
-  const response = http.get(TARGET, { timeout: '5s' });
+        const response = http.get(TARGET, { timeout: '5s' });
 
-  if (response.status !== 200) {
-    throw new Error(
-      `sample-server is not answering on ${BASE_URL} ` +
-        `(status ${response.status}, ${response.error || 'no transport error'}) — ` +
-        `start it with: cd testbed/sample-server && cargo run`,
-    );
-  }
+        if (response.status !== 200) {
+                throw new Error(
+                        `sample-server is not answering on ${BASE_URL} ` +
+                        `(status ${response.status}, ${response.error || 'no transport error'}) — ` +
+                        `start it with: cd testbed/sample-server && cargo run`,
+                );
+        }
 }
 
 // k6 only honours `handleSummary` when the entry script exports it, so this
 // delegates rather than importing the formatter as the hook directly. The shape
 // of the report lives in config.js, shared with every other scenario.
 export function handleSummary(data) {
-  return timingSummary('Floor — 1 VU, GET /, no concurrency', data);
+        return timingSummary('Floor — 1 VU, GET /, no concurrency', data);
 }
