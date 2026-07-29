@@ -169,13 +169,11 @@ pub fn get_route_function(url: &str, method: Method) -> Option<RouteHandler> {
 
     let route_handlers = get_route_handlers_by_method(method).lock().unwrap();
 
-    let handler = route_handlers
+    route_handlers
         .iter()
         .filter(|(route_path, _)| is_path_matching_route_path(path, route_path))
         .min_by_key(|(route_path, _)| route_path.matches('{').count())
-        .map(|(_, handler)| *handler);
-
-    handler
+        .map(|(_, handler)| *handler)
 }
 
 /// Registers a handler function for the given HTTP method and path.
