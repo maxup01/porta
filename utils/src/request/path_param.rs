@@ -101,7 +101,7 @@ pub fn extract_path_params(route_path: &str, path: &str) -> Result<HashMap<Strin
 
         param_values_as_json.insert(
             route_path_part[1..(route_path_part.len() - 1)].to_string(),
-            path_part[0..path_part.len()].to_string(),
+            path_part.to_string(),
         );
     }
 
