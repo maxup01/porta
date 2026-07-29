@@ -216,7 +216,13 @@ fn missing_param_returns_400() {
 fn no_response_bytes_are_built_inside_the_macro() {
     let f: ItemFn = parse_quote! { fn h(id: u32, payload: MyDto) -> String { String::new() } };
 
-    for method in [Method::GET, Method::POST, Method::PATCH, Method::DELETE] {
+    for method in [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+    ] {
         let src = handler_src(f.clone(), "/r/{id}", method);
 
         assert!(

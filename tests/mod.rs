@@ -1,4 +1,4 @@
-use macros::{delete, get, patch, post};
+use macros::{delete, get, patch, post, put};
 use serde::{Deserialize, Serialize};
 use utils::response::{HttpResponse, HttpStatus};
 
@@ -132,6 +132,37 @@ fn test_patch_with_invalid_id_returns_404() {
     let response =
         update_item("PATCH /items/abc HTTP/1.1\r\nContent-Type: application/json\r\n\r\nnewname");
     assert!(response.starts_with(EXPECTED_404_PREFIX));
+}
+
+// ── PUT ──────────────────────────────────────────────────────────────────────
+
+#[put(path = "/items/{id}")]
+fn replace_item(id: u32, name: String) -> HttpResponse<Updated> {
+    HttpResponse::new(Updated { id, name }, HttpStatus::Ok)
+}
+
+#[test]
+fn test_put_with_path_param_and_body() {
+    let response =
+        replace_item("PUT /items/3 HTTP/1.1\r\nContent-Type: application/json\r\n\r\nreplaced");
+    assert!(response.starts_with(EXPECTED_OK_PREFIX));
+    let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
+    let updated: Updated = serde_json::from_str(body).unwrap();
+    assert_eq!(updated.id, 3);
+    assert_eq!(updated.name, "replaced");
+}
+
+#[test]
+fn test_put_with_invalid_id_returns_404() {
+    let response =
+        replace_item("PUT /items/abc HTTP/1.1\r\nContent-Type: application/json\r\n\r\nreplaced");
+    assert!(response.starts_with(EXPECTED_404_PREFIX));
+}
+
+#[test]
+fn test_put_without_body_returns_400() {
+    let response = replace_item("PUT /items/3 HTTP/1.1\r\nContent-Type: application/json\r\n\r\n");
+    assert!(response.starts_with(EXPECTED_400_PREFIX));
 }
 
 // ── DELETE ───────────────────────────────────────────────────────────────────
