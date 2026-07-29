@@ -2,5 +2,13 @@
 name = "sample-server"
 version = "0.1.0"
 edition = "2024"
+publish = false
+
+# Its own workspace root. Without this, running cargo from inside this directory
+# walks up, finds the workspace at the repository root, and refuses to build a
+# package that is not one of its members.
+[workspace]
 
 [dependencies]
+embedded_web_server = { path = "../.." }
+serde = { version = "1.0.0", features = ["derive"] }
