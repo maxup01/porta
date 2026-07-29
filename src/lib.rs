@@ -40,11 +40,6 @@ pub use tokio;
 #[doc(hidden)]
 pub use tokio_rustls;
 
-/// Incremental HTTP request parser used by the generated read loop to decide
-/// when a request's header block is complete and how much body to expect.
-#[doc(hidden)]
-pub use httparse;
-
 /// Registers route handlers at startup; used by the generated `#[ctor::ctor]` fn.
 #[doc(hidden)]
 pub use ctor;
@@ -60,6 +55,11 @@ pub use serde_json;
 /// by hand.
 #[doc(hidden)]
 pub use utils;
+
+/// Reading a request off a connection and answering it. The generated accept loop
+/// hands each stream here once the TLS handshake is done.
+#[doc(hidden)]
+pub use server;
 
 /// The `#[get]`, `#[post]`, `#[patch]`, `#[delete]` and `#[http_server]` attributes.
 pub use macros::*;
