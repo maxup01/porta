@@ -172,11 +172,15 @@ pub fn patch(
 /// # Limitations
 ///
 /// - Requests are read in 4 KB chunks until the header block parses and the
-///   `Content-Length` body has arrived. A request whose total size exceeds 32 MiB is
+///   `Content-Length` body has arrived. A request whose total size exceeds 1 MiB is
 ///   answered with `413 Payload Too Large`; a malformed header block or a body that
 ///   is not valid UTF-8 is answered with `400 Bad Request`.
-/// - The 32 MiB ceiling is per connection and the number of concurrent connections is
-///   unbounded, so peak memory scales with the number of clients.
+/// - At most 512 connections are served at once. Further clients wait in the kernel
+///   accept backlog until a slot frees. Peak memory is roughly
+///   `512 * 3 * 1 MiB` — the request buffer, the copied body and the deserialized
+///   value are live together — so the two limits are one decision, not two.
+/// - Bodies must be valid UTF-8, so binary payloads have to be encoded (base64 in
+///   JSON, say) rather than posted raw. There is no `multipart/form-data` support.
 /// - `Transfer-Encoding: chunked` is not supported. A chunked request is dispatched
 ///   with an empty body rather than being rejected.
 /// - A connection has 10 seconds to complete the TLS handshake and 30 seconds to
@@ -271,9 +275,31 @@ pub fn http_server(
                 .await
                 .expect("Failed to bind address");
 
+            // Ceiling on connections served at once. Peak memory is roughly
+            // MAX_CONNECTIONS * 3 * MAX_REQUEST_BYTES — the request buffer, the copied
+            // body and the deserialized value are live together — so the two limits are
+            // one decision rather than two.
+            const MAX_CONNECTIONS: usize = 512;
+
+            let connection_limit = ::std::sync::Arc::new(
+                ::embedded_web_server::tokio::sync::Semaphore::new(MAX_CONNECTIONS)
+            );
+
             let mut suppressed_accept_errors: u64 = 0;
 
             loop {
+                // Taken before `accept`, not after. Accepting first spends the descriptor
+                // regardless, which bounds memory but still walks into `EMFILE`; waiting
+                // here leaves excess clients queued in the kernel backlog instead.
+                //
+                // On the accept-error path below this is dropped by `continue`, which
+                // returns the slot.
+                let permit = connection_limit
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .expect("connection limit semaphore closed");
+
                 let (socket, _) = match listener.accept().await {
                     Ok(connection) => {
                         if suppressed_accept_errors > 0 {
@@ -308,6 +334,11 @@ pub fn http_server(
                 let acceptor = acceptor.clone();
 
                 ::embedded_web_server::tokio::spawn(async move {
+                    // Bound to a name, not to `_`: `let _ = permit` would drop it here
+                    // and release the slot immediately. Held like this it lives to the
+                    // end of the task, so every exit path below returns it.
+                    let _permit = permit;
+
                     // A peer that opens a socket and never sends a ClientHello would
                     // otherwise hold this task forever, which is the cheapest way to
                     // exhaust the process: it costs the client one socket and no data.
@@ -336,7 +367,7 @@ pub fn http_server(
                     let deadline = ::embedded_web_server::tokio::time::Instant::now()
                         + REQUEST_TIMEOUT;
 
-                    const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
+                    const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 
                     let bad_request = ::embedded_web_server::utils::response::status_response(
                         ::embedded_web_server::utils::response::HttpStatus::BadRequest
