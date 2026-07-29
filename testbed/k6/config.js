@@ -4,6 +4,11 @@
 // no package.json and no node_modules here. Only npm package resolution is
 // unavailable in k6's runtime; local file imports work as they look.
 
+// k6's own summary formatter, the one behind the default end-of-test report.
+// Fetched over the network and cached, so this is the only thing here that needs
+// connectivity, and only on a cold cache.
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.4/index.js';
+
 // Must match the ip and port in the `#[http_server]` attribute on sample-server's
 // main. The macro takes them as literals, so the server cannot be pointed
 // elsewhere at runtime and this cannot be overridden by an environment variable
@@ -69,3 +74,27 @@ export const USER_BODY = JSON.stringify({ name: 'grace', active: true });
 export const JSON_PARAMS = {
         headers: { 'Content-Type': 'application/json' },
 };
+
+// Titles a run and renders it with k6's own summary formatter.
+//
+// `textSummary` is the same code that produces the default end-of-test report, so
+// this reproduces the standard table rather than a hand-rolled imitation of it —
+// including the `http_req_tls_handshaking` and `http_req_waiting` rows, which are
+// the two that matter here. A connection serves exactly one request, so every
+// request pays a full handshake; comparing those two rows is how you tell whether
+// a slow result is the negotiation or the server.
+//
+// Lives here so the ramp and payload scenarios report in the same shape. Two runs
+// formatted differently are two runs that are tedious to compare.
+//
+// k6 requires `handleSummary` to be exported from the entry script, so a scenario
+// delegates rather than importing this as its hook:
+//
+//   export function handleSummary(data) {
+//     return timingSummary('Floor — 1 VU, GET /', data);
+//   }
+export function timingSummary(title, data) {
+        const report = textSummary(data, { indent: '  ', enableColors: true });
+
+        return { stdout: `\n  ${title}\n${report}\n` };
+}
