@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["macros", "error", "utils", "server"]
+members = ["macros", "error", "utils", "server", "testbed/sample-server"]
 
 [dependencies]
 tokio = { version = "1.52.0", features = ["full"] }
