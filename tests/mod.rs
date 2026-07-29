@@ -4,6 +4,11 @@ use utils::response::{HttpResponse, HttpStatus};
 
 const EXPECTED_OK_PREFIX: &str = "HTTP/1.1 200 OK\r\n";
 const EXPECTED_404_PREFIX: &str = "HTTP/1.1 404 Not Found\r\n";
+const EXPECTED_400_PREFIX: &str = "HTTP/1.1 400 Bad Request\r\n";
+
+fn body_of(response: &str) -> &str {
+    &response[response.find("\r\n\r\n").expect("no header/body separator") + 4..]
+}
 
 #[derive(Serialize, Deserialize)]
 struct Item {
@@ -171,4 +176,134 @@ fn test_delete_with_invalid_path_param_returns_404() {
 fn test_delete_with_invalid_query_param_returns_404() {
     let response = delete_item_by_query("DELETE /items?id=abc");
     assert!(response.starts_with(EXPECTED_404_PREFIX));
+}
+
+// ── Generated handler error paths ────────────────────────────────────────────
+//
+// Everything below drives a macro-generated handler directly, which is the only
+// part of the expansion reachable from this workspace. The accept loop, the read
+// loop, the 413 ceiling and the request deadline live inside `http_server`'s
+// `quote!` block and have no callable form here — see the note at the bottom.
+
+#[get(path = "/errors/{id}")]
+fn error_item(id: u32) -> HttpResponse<Item> {
+    HttpResponse::new(
+        Item {
+            id,
+            name: "test".to_string(),
+        },
+        HttpStatus::Ok,
+    )
+}
+
+#[get(path = "/errors-query")]
+fn error_by_query(id: u32) -> HttpResponse<Item> {
+    HttpResponse::new(
+        Item {
+            id,
+            name: "test".to_string(),
+        },
+        HttpStatus::Ok,
+    )
+}
+
+#[post(path = "/errors-body")]
+fn error_body(name: String) -> HttpResponse<Created> {
+    HttpResponse::new(Created { id: 1, name }, HttpStatus::Ok)
+}
+
+#[test]
+fn malformed_request_line_returns_400() {
+    // No second whitespace-delimited token, so there is no request target to read.
+    let response = error_item("GARBAGE");
+
+    assert!(
+        response.starts_with(EXPECTED_400_PREFIX),
+        "unexpected response: {response}"
+    );
+}
+
+#[test]
+fn missing_parameter_returns_400_not_404() {
+    // `id` is neither a path segment nor a query parameter here. A value that is
+    // present but unparseable is a 404; one that is absent is a 400.
+    let response = error_by_query("GET /errors-query");
+
+    assert!(
+        response.starts_with(EXPECTED_400_PREFIX),
+        "unexpected response: {response}"
+    );
+}
+
+#[test]
+fn post_with_empty_body_returns_400() {
+    let response =
+        error_body("POST /errors-body HTTP/1.1\r\nContent-Type: application/json\r\n\r\n");
+
+    assert!(
+        response.starts_with(EXPECTED_400_PREFIX),
+        "unexpected response: {response}"
+    );
+}
+
+// ── Query string handling in generated handlers ──────────────────────────────
+
+#[test]
+fn query_string_is_stripped_before_path_params_are_matched() {
+    // The handler splits the target itself: `/errors/7` must match `/errors/{id}`
+    // even though the request carries a query string the route pattern cannot.
+    let response = error_item("GET /errors/7?unrelated=ignored");
+
+    assert!(
+        response.starts_with(EXPECTED_OK_PREFIX),
+        "unexpected response: {response}"
+    );
+
+    let item: Item = serde_json::from_str(body_of(&response)).unwrap();
+    assert_eq!(item.id, 7);
+}
+
+#[test]
+fn query_parameter_overrides_path_parameter_of_the_same_name() {
+    // Path params are collected first, then query params are merged over them.
+    // Pinning this because it is a silent precedence rule, not an obvious one.
+    let response = error_item("GET /errors/7?id=9");
+
+    assert!(response.starts_with(EXPECTED_OK_PREFIX));
+
+    let item: Item = serde_json::from_str(body_of(&response)).unwrap();
+    assert_eq!(item.id, 9, "the query string should win over the path");
+}
+
+// ── Response framing ─────────────────────────────────────────────────────────
+
+#[test]
+fn successful_response_carries_framing_headers() {
+    let response = get_item("GET /items/1");
+
+    assert!(response.contains("Content-Type: application/json\r\n"));
+    assert!(response.contains("Connection: close\r\n"));
+    assert!(response.contains("Date: "));
+}
+
+#[test]
+fn error_response_carries_framing_headers() {
+    let response = get_item("GET /items/abc");
+
+    assert!(response.contains("Content-Type: text/plain\r\n"));
+    assert!(response.contains("Connection: close\r\n"));
+    assert!(response.contains("Date: "));
+}
+
+#[test]
+fn content_length_matches_the_body_it_describes() {
+    for response in [get_item("GET /items/1"), get_item("GET /items/abc")] {
+        let body = body_of(&response);
+        let expected = format!("Content-Length: {}\r\n", body.len());
+
+        assert!(
+            response.contains(&expected),
+            "Content-Length disagrees with the body: {response}"
+        );
+    }
 }
