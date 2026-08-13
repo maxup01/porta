@@ -520,3 +520,79 @@ fn status_response_and_format_response_share_a_header_set() {
         assert!(success.contains(header), "success response missing {header}");
     }
 }
+
+// ── with_headers ─────────────────────────────────────────────────────────────
+
+#[test]
+fn with_headers_inserts_after_the_status_line() {
+    let raw = with_headers(
+        &status_response(HttpStatus::NotFound),
+        &[("Allow", "GET, POST".to_string())],
+    );
+
+    assert!(
+        raw.starts_with("HTTP/1.1 404 Not Found\r\nAllow: GET, POST\r\n"),
+        "{raw}"
+    );
+}
+
+#[test]
+fn with_headers_keeps_the_body_and_the_existing_headers() {
+    let response = formatted(simple_body(), HttpStatus::Ok);
+    let raw = with_headers(&response, &[("Vary", "Origin".to_string())]);
+
+    let (_, original_body) = response
+        .split_once("\r\n\r\n")
+        .expect("no header/body separator");
+    let (_, body) = raw.split_once("\r\n\r\n").expect("no header/body separator");
+
+    assert_eq!(body, original_body);
+    assert!(raw.contains("Content-Type: application/json\r\n"));
+    assert!(raw.contains("Content-Length: "));
+}
+
+#[test]
+fn with_headers_preserves_a_204s_missing_body() {
+    // A 204 carries neither body nor content headers, and adding a header must
+    // not accidentally give it a body separator it did not have.
+    let raw = with_headers(
+        &status_response(HttpStatus::NoContent),
+        &[("Access-Control-Allow-Origin", "*".to_string())],
+    );
+
+    assert!(raw.ends_with("\r\n\r\n"), "{raw}");
+    assert!(!raw.contains("Content-Length"), "{raw}");
+}
+
+#[test]
+fn with_headers_adds_every_header_in_order() {
+    let raw = with_headers(
+        &status_response(HttpStatus::NoContent),
+        &[
+            ("Access-Control-Allow-Origin", "http://a.test".to_string()),
+            ("Vary", "Origin".to_string()),
+        ],
+    );
+
+    let origin_at = raw.find("Access-Control-Allow-Origin").expect("origin header");
+    let vary_at = raw.find("Vary").expect("vary header");
+
+    assert!(origin_at < vary_at, "{raw}");
+}
+
+#[test]
+fn with_headers_returns_the_response_unchanged_when_there_is_nothing_to_add() {
+    let response = status_response(HttpStatus::Ok);
+
+    assert_eq!(with_headers(&response, &[]), response);
+}
+
+#[test]
+fn with_headers_leaves_a_response_with_no_status_line_alone() {
+    // Nothing produces this, but corrupting an already-broken message further
+    // would only make the cause harder to see.
+    assert_eq!(
+        with_headers("garbage", &[("Allow", "GET".to_string())]),
+        "garbage"
+    );
+}
