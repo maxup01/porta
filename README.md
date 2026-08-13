@@ -10,6 +10,7 @@
 - **Zero-boilerplate startup** — `#[http_server]` rewrites `main` into a full async TLS server.
 - **Automatic parameter binding** — path params, query params, and JSON bodies are parsed and deserialized straight into your function arguments.
 - **Typed responses** — return an `HttpResponse<T>` with a strongly-typed `HttpStatus`; serialization and HTTP formatting are handled for you.
+- **CORS when you want it** — name the origins in `#[http_server]` and preflights are answered and headers attached; name none and nothing changes.
 - **TLS by default** — every connection is served over `rustls` with an in-process self-signed certificate.
 - **Bounded by construction** — request size, request duration and connection count all have ceilings, and exceeding one produces a proper HTTP status rather than unbounded growth.
 - **Built on Tokio** — connections are accepted and handled concurrently.
@@ -156,7 +157,53 @@ Applied to `main`, this macro generates a complete async server. At startup it:
 async fn main() {}
 ```
 
-Both `ip` (string) and `port` (integer) are required. The macro must be applied to a function named `main`.
+| Argument | Type | Required | Meaning |
+|----------|------|----------|---------|
+| `ip` | string literal | yes | address to bind |
+| `port` | integer literal | yes | TCP port to listen on |
+| `allow_origins` | array of string literals | no | origins permitted to call this server from a browser |
+
+The macro must be applied to a function named `main`. A missing required argument, an unknown argument name and a repeated one are all compile errors pointing at the offending token.
+
+## CORS
+
+Browsers refuse to hand a page the response to a cross-origin request unless the server says they may. Nothing but the browser enforces this, so it changes nothing for `curl`, for a reverse proxy, or for a load test — a request without an `Origin` header is answered exactly as it was before this existed.
+
+By default no cross-origin headers are emitted at all. Naming origins turns them on:
+
+```rust
+#[http_server(
+    ip = "127.0.0.1",
+    port = 8443,
+    allow_origins = ["http://localhost:1420", "tauri://localhost"]
+)]
+async fn main() {}
+```
+
+Use `["*"]` to permit any origin. Origins are matched in full — scheme, host and port, no trailing slash — and compared case-insensitively; `http://localhost:1420` and `http://127.0.0.1:1420` are different origins.
+
+Two things then happen, and a browser needs both:
+
+**The preflight.** Before any request that is not [simple] — which includes every `fetch` carrying `Content-Type: application/json` — the browser sends an `OPTIONS` request of its own and will not send the real one until it is answered. A preflight from a listed origin gets:
+
+```text
+HTTP/1.1 204 No Content
+Access-Control-Allow-Origin: http://localhost:1420
+Vary: Origin
+Access-Control-Allow-Methods: POST
+Access-Control-Allow-Headers: content-type
+Access-Control-Max-Age: 600
+```
+
+`Access-Control-Allow-Methods` lists what the path actually serves, so a preflight for `DELETE` against a `GET`-only route comes back listing `GET` and the browser blocks the request itself. `Access-Control-Allow-Headers` echoes what was asked for. The result is cacheable for ten minutes, which matters here: this server closes after one request, so an uncached preflight doubles the connection count.
+
+**The response.** Every answer to a request from a listed origin carries `Access-Control-Allow-Origin`, whether it came from a handler or from the server — a `404` a script cannot read shows up in the console as an opaque load failure rather than as a `404`.
+
+An origin that is not listed gets a truthful answer with no CORS headers on it, which is how a browser is told no. `Vary: Origin` accompanies any echoed origin so a shared cache cannot serve one origin's permission slip to another.
+
+Credentialed requests (cookies, `Authorization`) are not enabled through this attribute. `utils::cors::CorsConfig` supports them along with an explicit allow-header list; only the origin list is currently reachable from `#[http_server]`.
+
+[simple]: https://developer.mozilla.org/docs/Glossary/CORS-safelisted_request_header
 
 ## Limits
 
