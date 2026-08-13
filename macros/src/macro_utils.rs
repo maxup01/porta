@@ -2,9 +2,113 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::vec::Vec;
 use syn::{
-    FnArg, ItemFn, Lit, Meta, NestedMeta, Pat, PatType, punctuated::Punctuated, token::Comma,
+    FnArg, Ident, ItemFn, Lit, LitInt, LitStr, Meta, NestedMeta, Pat, PatType, Token, bracketed,
+    parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+    token::Comma,
 };
 use utils::request::route::Method;
+
+/// The arguments to `#[http_server(..)]`, parsed.
+///
+/// This is parsed by hand rather than through [`syn::AttributeArgs`] because
+/// `AttributeArgs` cannot represent `allow_origins = ["a", "b"]`: its
+/// `Meta::NameValue` takes a single [`Lit`] on the right, and a list literal is
+/// not a literal. The choice is between a list-of-lists syntax the attribute
+/// would have to invent — `allow_origins("a", "b")` — and reading the tokens
+/// directly, which is what this does.
+///
+/// Doing so is also how the attribute reports mistakes properly. Every failure
+/// below carries the span of the token that caused it, so a misspelled argument
+/// underlines the argument rather than aborting the whole expansion with a
+/// panic message and no location.
+#[derive(Debug, PartialEq, Eq)]
+pub struct HttpServerArgs {
+    /// IP address to bind to.
+    pub ip: String,
+
+    /// TCP port to listen on.
+    pub port: u16,
+
+    /// Origins permitted to call this server from a browser. Empty means no CORS
+    /// headers are emitted at all, which is the default.
+    pub allow_origins: Vec<String>,
+}
+
+impl Parse for HttpServerArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut ip: Option<String> = None;
+        let mut port: Option<u16> = None;
+        let mut allow_origins: Option<Vec<String>> = None;
+
+        while !input.is_empty() {
+            let name: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+
+            match name.to_string().as_str() {
+                "ip" => ip = Some(parse_once(&name, ip, input.parse::<LitStr>()?.value())?),
+                "port" => {
+                    port = Some(parse_once(
+                        &name,
+                        port,
+                        input.parse::<LitInt>()?.base10_parse::<u16>()?,
+                    )?)
+                }
+                "allow_origins" => {
+                    allow_origins =
+                        Some(parse_once(&name, allow_origins, parse_string_array(input)?)?)
+                }
+                unknown => {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        format!(
+                            "unknown argument `{}`; expected one of `ip`, `port`, `allow_origins`",
+                            unknown
+                        ),
+                    ));
+                }
+            }
+
+            // A trailing comma is allowed; a missing one between arguments is not.
+            if input.is_empty() {
+                break;
+            }
+
+            input.parse::<Token![,]>()?;
+        }
+
+        Ok(HttpServerArgs {
+            ip: ip.ok_or_else(|| input.error("`ip` is required, e.g. ip = \"127.0.0.1\""))?,
+            port: port.ok_or_else(|| input.error("`port` is required, e.g. port = 8443"))?,
+            allow_origins: allow_origins.unwrap_or_default(),
+        })
+    }
+}
+
+/// Returns `value`, or an error if this argument was already given.
+///
+/// Silently letting the last one win would make `ip = "0.0.0.0", ip = "127.0.0.1"`
+/// bind somewhere the source does not obviously say.
+fn parse_once<T>(name: &Ident, existing: Option<T>, value: T) -> syn::Result<T> {
+    match existing {
+        Some(_) => Err(syn::Error::new(
+            name.span(),
+            format!("`{}` is given more than once", name),
+        )),
+        None => Ok(value),
+    }
+}
+
+/// Parses `["a", "b"]` into the strings it contains.
+fn parse_string_array(input: ParseStream) -> syn::Result<Vec<String>> {
+    let content;
+    bracketed!(content in input);
+
+    Ok(Punctuated::<LitStr, Comma>::parse_terminated(&content)?
+        .into_iter()
+        .map(|literal| literal.value())
+        .collect())
+}
 
 /// Searches the attribute argument list for a `path = "..."` key-value pair
 /// and returns the path string if found.

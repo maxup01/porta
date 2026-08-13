@@ -83,7 +83,7 @@ Each macro takes a required `path` argument and registers the annotated function
 | `#[patch(path = "...")]`  | PATCH  | `#[patch(path = "/users/{id}")]` |
 | `#[delete(path = "...")]` | DELETE | `#[delete(path = "/users/{id}")]` |
 
-`HEAD` and `OPTIONS` are not supported.
+`HEAD` is not supported. `OPTIONS` has no macro because it is not routed: the server answers it itself, from the route table — see [CORS](#cors).
 
 ### Parameter binding
 
@@ -117,11 +117,12 @@ The dispatcher answers in this order:
 | Situation | Response |
 |-----------|----------|
 | A handler matches the path and method | the handler's response |
-| The path is served, but by another method | `405 Method Not Allowed` |
+| The request is `OPTIONS` and the path is served | `204 No Content` + `Allow` |
+| The path is served, but by another method | `405 Method Not Allowed` + `Allow` |
 | No method serves the path | `404 Not Found` |
 | The request line could not be parsed | `400 Bad Request` |
 
-The `405` does not carry an `Allow` header.
+`Allow` lists every method that serves the path, plus `OPTIONS`.
 
 ## Responses
 

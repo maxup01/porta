@@ -12,10 +12,12 @@
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::Instant;
+use utils::cors::{CorsConfig, is_preflight};
 use utils::request::route::{
-    extract_method_from_request, extract_path_from_request, get_route_function, path_exists,
+    Method, extract_method_from_request, extract_method_token_from_request,
+    extract_path_from_request, get_route_function, methods_for_path,
 };
-use utils::response::{HttpStatus, status_response};
+use utils::response::{HttpStatus, status_response, with_headers};
 
 /// Size of a single read from the stream. Requests are assembled from as many of
 /// these as they need.
@@ -70,7 +72,11 @@ enum ReadOutcome {
 /// down explicitly, which is what emits the TLS `close_notify` when the stream is a
 /// TLS one — dropping it would skip that, because shutdown is an async write and
 /// `Drop` is synchronous.
-pub async fn handle_connection<S>(stream: &mut S, limits: Limits)
+///
+/// `cors` is the policy the server was configured with. Pass
+/// [`CorsConfig::disabled`] to answer exactly as this server did before CORS
+/// existed: no cross-origin headers on anything.
+pub async fn handle_connection<S>(stream: &mut S, limits: Limits, cors: &CorsConfig)
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -87,14 +93,19 @@ where
         ReadOutcome::Abandon => return,
     };
 
-    respond(stream, &dispatch(&request)).await;
+    respond(stream, &dispatch(&request, cors)).await;
 }
 
 /// Resolves a raw request to a response, without touching the transport.
 ///
 /// Separate from [`handle_connection`] so the routing decision — handler, `405` or
 /// `404` — can be tested against a plain string.
-pub fn dispatch(request: &str) -> String {
+///
+/// Every answer leaves through here, which is what makes this the place to attach
+/// the CORS headers: a handler's response and a status the server generated itself
+/// need the same ones, and a browser rejects the second as readily as the first
+/// when they are missing.
+pub fn dispatch(request: &str, cors: &CorsConfig) -> String {
     let path = match extract_path_from_request(request) {
         Ok(path) => path,
         Err(_) => return status_response(HttpStatus::BadRequest),
@@ -106,20 +117,85 @@ pub fn dispatch(request: &str) -> String {
         None => path.as_str(),
     };
 
+    // Answered here rather than routed. `OPTIONS` is not a `Method`, so no handler
+    // can be registered for it, and a browser sends one on its own initiative
+    // before any request carrying a JSON body — including from a page this server
+    // is the entire backend for. Falling through to the routing below would answer
+    // it `404`, and the request the browser was asking permission for would never
+    // be sent.
+    if let Ok(method_token) = extract_method_token_from_request(request)
+        && method_token == "OPTIONS"
+    {
+        return options_response(request, path_without_query, cors);
+    }
+
     let route_function = match extract_method_from_request(request) {
         Ok(method) => get_route_function(path_without_query, method),
         Err(_) => None,
     };
 
-    if let Some(route_function) = route_function {
-        route_function(request)
-    } else if path_exists(path_without_query) {
-        // Served by some other verb, so this is the wrong method rather than a
-        // missing resource.
-        status_response(HttpStatus::MethodNotAllowed)
-    } else {
-        status_response(HttpStatus::NotFound)
+    let response = match route_function {
+        Some(route_function) => route_function(request),
+        None => {
+            let allowed_methods = methods_for_path(path_without_query);
+
+            if allowed_methods.is_empty() {
+                status_response(HttpStatus::NotFound)
+            } else {
+                // Served by some other verb, so this is the wrong method rather
+                // than a missing resource. RFC 9110 §15.5.6 requires the `Allow`
+                // header naming what is served instead.
+                with_headers(
+                    &status_response(HttpStatus::MethodNotAllowed),
+                    &[("Allow", allow_header_value(&allowed_methods))],
+                )
+            }
+        }
+    };
+
+    with_headers(&response, &cors.response_headers(request))
+}
+
+/// Answers an `OPTIONS` request: a CORS preflight if it is one and the policy
+/// permits it, otherwise a plain statement of what the path serves.
+///
+/// A path nothing serves is a `404` either way. Answering a preflight for a route
+/// that does not exist would grant permission for a request that could only fail,
+/// and would make a typo in a URL look like a CORS problem.
+fn options_response(request: &str, path: &str, cors: &CorsConfig) -> String {
+    let allowed_methods = methods_for_path(path);
+
+    if allowed_methods.is_empty() {
+        return status_response(HttpStatus::NotFound);
     }
+
+    if is_preflight(request)
+        && let Some(preflight_headers) = cors.preflight_headers(request, &allowed_methods)
+    {
+        return with_headers(&status_response(HttpStatus::NoContent), &preflight_headers);
+    }
+
+    // Either not a preflight, or from an origin the policy does not cover. Both get
+    // the same honest answer — here is what this path serves — and in the second
+    // case the absent CORS headers are what tell the browser no.
+    let mut headers = vec![("Allow", allow_header_value(&allowed_methods))];
+    headers.extend(cors.response_headers(request));
+
+    with_headers(&status_response(HttpStatus::NoContent), &headers)
+}
+
+/// Formats an `Allow` header value from the methods a path serves.
+///
+/// `OPTIONS` is appended because the server does answer it for every path that
+/// exists, whatever its route table says, and `Allow` is defined as the set the
+/// resource supports rather than the set someone registered.
+fn allow_header_value(allowed_methods: &[Method]) -> String {
+    allowed_methods
+        .iter()
+        .map(Method::as_str)
+        .chain(std::iter::once("OPTIONS"))
+        .collect::<Vec<&str>>()
+        .join(", ")
 }
 
 /// Reads until a complete request has arrived, or until something says stop.
