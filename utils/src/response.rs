@@ -318,6 +318,64 @@ pub fn status_response(status: HttpStatus) -> String {
     format_http_message(status, "text/plain", &status.to_string())
 }
 
+/// Returns `response` with `headers` inserted directly after the status line.
+///
+/// A handler returns a finished HTTP message as a `String`, so headers the
+/// server decides on afterwards — `Access-Control-Allow-Origin`, `Allow` — have
+/// no other seam to enter through. Inserting after the status line rather than
+/// before the blank line keeps the operation independent of whether the message
+/// has a body, and is valid either way: header order carries no meaning in
+/// HTTP/1.1 (RFC 9110 §5.3).
+///
+/// Nothing is de-duplicated. Headers added here are ones only the server emits,
+/// so a collision with a header already in `response` would be a bug in the
+/// caller rather than input to defend against.
+///
+/// A `response` with no CRLF at all is returned unchanged: there is no status
+/// line to insert after, and corrupting an already-malformed message helps
+/// nobody.
+///
+/// # Examples
+///
+/// ```rust
+/// use utils::response::{HttpStatus, status_response, with_headers};
+///
+/// let response = status_response(HttpStatus::NoContent);
+/// let with_cors = with_headers(
+///     &response,
+///     &[("Access-Control-Allow-Origin", "*".to_string())],
+/// );
+///
+/// assert!(with_cors.starts_with("HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\n"));
+/// assert!(with_cors.ends_with("\r\n\r\n"));
+/// ```
+pub fn with_headers(response: &str, headers: &[(&str, String)]) -> String {
+    if headers.is_empty() {
+        return response.to_string();
+    }
+
+    let Some(status_line_end) = response.find("\r\n") else {
+        return response.to_string();
+    };
+
+    let insertion_point = status_line_end + 2;
+
+    let mut with_headers = String::with_capacity(response.len() + headers.len() * 64);
+
+    with_headers.push_str(&response[..insertion_point]);
+
+    for (name, value) in headers {
+        with_headers.push_str(name);
+        with_headers.push_str(": ");
+        with_headers.push_str(value);
+        with_headers.push_str("\r\n");
+    }
+
+    with_headers.push_str(&response[insertion_point..]);
+
+    with_headers
+}
+
 #[cfg(test)]
 #[path = "response_tests.rs"]
 mod tests;
