@@ -44,13 +44,56 @@ static DELETE_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock:
 });
 
 /// Enum representing http methods
-#[derive(PartialEq, Eq, Debug, Clone)]
+///
+/// These are the *routable* verbs — the ones a handler can be registered for,
+/// and the ones that own a route table. `OPTIONS` is deliberately not among
+/// them: the server answers it itself, from the tables below, rather than
+/// dispatching it to user code. Giving it a variant would mean giving it a
+/// table no macro can ever fill, and a `register_route(Method::OPTIONS, ..)`
+/// whose handler would never be reached. See
+/// [`extract_method_token_from_request`] for how the verb is recognised before
+/// it is parsed.
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum Method {
     GET,
     POST,
     PUT,
     PATCH,
     DELETE,
+}
+
+/// Every routable method, in the order an `Allow` header should list them.
+///
+/// A variant missing from this list is invisible to [`methods_for_path`], so a
+/// path served only by that method would answer `404` instead of `405`.
+pub const ROUTABLE_METHODS: [Method; 5] = [
+    Method::GET,
+    Method::POST,
+    Method::PUT,
+    Method::PATCH,
+    Method::DELETE,
+];
+
+impl Method {
+    /// The verb as it appears on the wire, for use in `Allow` and
+    /// `Access-Control-Allow-Methods` headers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use utils::request::route::Method;
+    ///
+    /// assert_eq!(Method::DELETE.as_str(), "DELETE");
+    /// ```
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Method::GET => "GET",
+            Method::POST => "POST",
+            Method::PUT => "PUT",
+            Method::PATCH => "PATCH",
+            Method::DELETE => "DELETE",
+        }
+    }
 }
 
 /// Parses a string slice into an HTTP [`Method`].
@@ -314,12 +357,6 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
 /// The scan stops at the first method that serves the path, so a `GET` route is
 /// confirmed without locking the other three tables.
 ///
-/// # Caveats
-///
-/// This answers only *whether* some method serves the path, never *which*. Building an
-/// RFC 9110 `Allow` header means collecting the matching methods rather than
-/// short-circuiting on the first.
-///
 /// # Panics
 ///
 /// Panics if a route table mutex is poisoned.
@@ -340,18 +377,54 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
 /// assert!(!path_exists("/nonexistent"));
 /// ```
 pub fn path_exists(path: &str) -> bool {
-    // Every method that owns a route table. A variant missing from this list is
-    // invisible here, so a path served only by that method would answer `404`
-    // instead of `405`.
-    [
-        Method::GET,
-        Method::POST,
-        Method::PUT,
-        Method::PATCH,
-        Method::DELETE,
-    ]
-    .into_iter()
-    .any(|method| get_route_function(path, method).is_some())
+    // Short-circuits on the first method that serves the path, where
+    // `methods_for_path` must probe all five.
+    ROUTABLE_METHODS
+        .into_iter()
+        .any(|method| get_route_function(path, method).is_some())
+}
+
+/// Every routable method that serves `path`, in [`ROUTABLE_METHODS`] order.
+///
+/// This is the *which* that [`path_exists`] deliberately withholds, and it exists
+/// for the two answers that have to name the alternatives: the `Allow` header on a
+/// `405`, and `Access-Control-Allow-Methods` on a CORS preflight. Both are defined
+/// by RFC 9110 §10.2.1 and §15.5.6 as lists, and a server that omits them leaves a
+/// browser with nothing to check the preflight against.
+///
+/// Matching is structural, exactly as in [`get_route_function`]: the concrete path
+/// `/users/42` collects every method that registered a pattern matching it.
+///
+/// An empty result means no method serves the path — the same condition
+/// [`path_exists`] reports as `false`, and the one that separates `404` from `405`.
+///
+/// # Panics
+///
+/// Panics if a route table mutex is poisoned.
+///
+/// # Examples
+///
+/// ```
+/// use utils::request::route::{Method, methods_for_path, register_route};
+///
+/// fn handler(request: &str) -> String {
+///     "Hello, world!".to_string()
+/// }
+///
+/// register_route(Method::GET, "/articles/{id}", handler);
+/// register_route(Method::DELETE, "/articles/{id}", handler);
+///
+/// assert_eq!(
+///     methods_for_path("/articles/42"),
+///     vec![Method::GET, Method::DELETE]
+/// );
+/// assert!(methods_for_path("/nonexistent").is_empty());
+/// ```
+pub fn methods_for_path(path: &str) -> Vec<Method> {
+    ROUTABLE_METHODS
+        .into_iter()
+        .filter(|method| get_route_function(path, *method).is_some())
+        .collect()
 }
 
 /// Extracts and parses the HTTP method from a raw HTTP request line.
