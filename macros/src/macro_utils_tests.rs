@@ -231,3 +231,104 @@ fn no_response_bytes_are_built_inside_the_macro() {
         );
     }
 }
+
+// ── HttpServerArgs ───────────────────────────────────────────────────────────
+
+fn parse_args(args: &str) -> syn::Result<HttpServerArgs> {
+    syn::parse_str::<HttpServerArgs>(args)
+}
+
+#[test]
+fn parses_the_required_arguments() {
+    let args = parse_args(r#"ip = "127.0.0.1", port = 8443"#).expect("should parse");
+
+    assert_eq!(args.ip, "127.0.0.1");
+    assert_eq!(args.port, 8443);
+    // Absent means no CORS at all, not CORS with nothing allowed — the same
+    // behaviour the server had before the argument existed.
+    assert!(args.allow_origins.is_empty());
+}
+
+#[test]
+fn parses_an_origin_list() {
+    let args = parse_args(
+        r#"ip = "0.0.0.0", port = 80, allow_origins = ["http://localhost:1420", "tauri://localhost"]"#,
+    )
+    .expect("should parse");
+
+    assert_eq!(
+        args.allow_origins,
+        vec!["http://localhost:1420", "tauri://localhost"]
+    );
+}
+
+#[test]
+fn parses_a_single_origin_and_a_wildcard() {
+    let args = parse_args(r#"ip = "0.0.0.0", port = 80, allow_origins = ["*"]"#)
+        .expect("should parse");
+
+    assert_eq!(args.allow_origins, vec!["*"]);
+}
+
+#[test]
+fn an_empty_origin_list_parses_and_permits_nothing() {
+    let args =
+        parse_args(r#"ip = "0.0.0.0", port = 80, allow_origins = []"#).expect("should parse");
+
+    assert!(args.allow_origins.is_empty());
+}
+
+#[test]
+fn arguments_may_be_given_in_any_order() {
+    let args = parse_args(r#"allow_origins = ["http://a.test"], port = 8443, ip = "127.0.0.1""#)
+        .expect("should parse");
+
+    assert_eq!(args.ip, "127.0.0.1");
+    assert_eq!(args.port, 8443);
+    assert_eq!(args.allow_origins, vec!["http://a.test"]);
+}
+
+#[test]
+fn a_trailing_comma_is_accepted() {
+    assert!(parse_args(r#"ip = "127.0.0.1", port = 8443,"#).is_ok());
+    assert!(parse_args(r#"ip = "127.0.0.1", port = 8443, allow_origins = ["a", ],"#).is_ok());
+}
+
+#[test]
+fn a_missing_required_argument_is_an_error() {
+    assert!(parse_args(r#"port = 8443"#).is_err());
+    assert!(parse_args(r#"ip = "127.0.0.1""#).is_err());
+    assert!(parse_args("").is_err());
+}
+
+#[test]
+fn an_unknown_argument_is_an_error() {
+    // Silently ignoring it is how `allow_origin = [..]` turns into a CORS failure
+    // with nothing to read in the build output.
+    let error = parse_args(r#"ip = "127.0.0.1", port = 8443, allow_origin = ["a"]"#)
+        .expect_err("unknown argument should be rejected");
+
+    assert!(
+        error.to_string().contains("allow_origin"),
+        "the error should name the argument: {error}"
+    );
+}
+
+#[test]
+fn a_repeated_argument_is_an_error() {
+    let error = parse_args(r#"ip = "0.0.0.0", ip = "127.0.0.1", port = 8443"#)
+        .expect_err("a repeated argument should be rejected");
+
+    assert!(error.to_string().contains("more than once"), "{error}");
+}
+
+#[test]
+fn a_port_outside_u16_is_an_error() {
+    assert!(parse_args(r#"ip = "127.0.0.1", port = 70000"#).is_err());
+}
+
+#[test]
+fn an_origin_list_of_non_strings_is_an_error() {
+    assert!(parse_args(r#"ip = "127.0.0.1", port = 8443, allow_origins = [42]"#).is_err());
+    assert!(parse_args(r#"ip = "127.0.0.1", port = 8443, allow_origins = "http://a.test""#).is_err());
+}
