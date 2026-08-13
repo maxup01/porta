@@ -21,6 +21,7 @@ import {
         ERROR_ROUTES,
         USER_BODY,
         JSON_PARAMS,
+        ALLOWED_ORIGIN,
 } from './config.js';
 
 export const options = {
@@ -147,6 +148,68 @@ export default function() {
 
         check(invalidUtf8, {
                 'body that is not UTF-8 is refused with 400': (r) => r.status === 400,
+        });
+
+        // The exchange a browser performs before a JSON POST: an OPTIONS request of
+        // its own, then the real one. Neither half is reachable from the Rust suite
+        // over a socket, and the preflight is the request the server used to answer
+        // with a 404 because OPTIONS parses as no `Method`.
+        const preflight = http.options(`${BASE_URL}/users`, null, {
+                headers: {
+                        Origin: ALLOWED_ORIGIN,
+                        'Access-Control-Request-Method': 'POST',
+                        'Access-Control-Request-Headers': 'content-type',
+                },
+        });
+
+        check(preflight, {
+                'preflight is answered with 204': (r) => r.status === 204,
+                'preflight allows the configured origin': (r) =>
+                        r.headers['Access-Control-Allow-Origin'] === ALLOWED_ORIGIN,
+                'preflight names the methods the path serves': (r) =>
+                        r.headers['Access-Control-Allow-Methods'] === 'POST',
+                'preflight echoes the requested headers': (r) =>
+                        r.headers['Access-Control-Allow-Headers'] === 'content-type',
+        });
+
+        // The second leg. A granted preflight is worthless if the response it
+        // authorised arrives without the header.
+        const crossOrigin = http.post(`${BASE_URL}/users`, USER_BODY, {
+                headers: { ...JSON_PARAMS.headers, Origin: ALLOWED_ORIGIN },
+        });
+
+        check(crossOrigin, {
+                'cross-origin POST still answers 201': (r) => r.status === 201,
+                'cross-origin response carries the allow-origin header': (r) =>
+                        r.headers['Access-Control-Allow-Origin'] === ALLOWED_ORIGIN,
+                'cross-origin response varies by origin': (r) =>
+                        r.headers['Vary'] === 'Origin',
+        });
+
+        // An origin the server was not configured for gets a truthful answer with no
+        // permission attached, which is how a browser is told no.
+        const strangerPreflight = http.options(`${BASE_URL}/users`, null, {
+                headers: {
+                        Origin: 'http://evil.test',
+                        'Access-Control-Request-Method': 'POST',
+                },
+        });
+
+        check(strangerPreflight, {
+                'unlisted origin gets no allow-origin header': (r) =>
+                        r.headers['Access-Control-Allow-Origin'] === undefined,
+                'unlisted origin is still told what the path serves': (r) =>
+                        r.headers['Allow'] === 'POST, OPTIONS',
+        });
+
+        // A plain OPTIONS, with no browser involved: a capability query, and a path
+        // that plainly exists must not answer 404.
+        const capabilities = http.options(`${BASE_URL}/users/42`);
+
+        check(capabilities, {
+                'plain OPTIONS is answered with 204': (r) => r.status === 204,
+                'plain OPTIONS lists every method and OPTIONS': (r) =>
+                        r.headers['Allow'] === 'GET, PUT, PATCH, DELETE, OPTIONS',
         });
 }
 
