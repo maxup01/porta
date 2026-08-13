@@ -137,5 +137,14 @@ fn end_session(id: u64) -> HttpResponse<String> {
 // `/users` is served by GET, PUT, PATCH and DELETE but not POST-with-an-id, so
 // `POST /users/42` answers `405` while `POST /nowhere` answers `404`. That split is
 // the only thing distinguishing a wrong verb from a missing resource.
-#[http_server(ip = "127.0.0.1", port = 8443)]
+//
+// `allow_origins` is set so the preflight path is exercised by something other
+// than a unit test. k6 sends no `Origin` header, so it sees none of it: the load
+// figures are unaffected, and the CORS headers appear only for a request that
+// claims to come from that origin.
+#[http_server(
+    ip = "127.0.0.1",
+    port = 8443,
+    allow_origins = ["http://localhost:1420"]
+)]
 async fn main() {}

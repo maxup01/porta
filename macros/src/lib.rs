@@ -4,7 +4,7 @@ mod macro_utils;
 
 use macro_utils::*;
 use quote::quote;
-use syn::{AttributeArgs, ItemFn, Lit, Meta, NestedMeta, parse_macro_input};
+use syn::{AttributeArgs, ItemFn, parse_macro_input};
 use utils::request::route::Method;
 
 /// Registers the annotated function as a handler for HTTP `GET` requests at the given path.
@@ -168,13 +168,56 @@ pub fn patch(
 ///
 /// - `ip` — IP address to bind to, as a string literal (e.g. `"127.0.0.1"` or `"0.0.0.0"`)
 /// - `port` — TCP port to listen on, as an integer literal (e.g. `8443`)
+/// - `allow_origins` — optional list of origins permitted to call this server from
+///   a browser, as an array of string literals (e.g.
+///   `["http://localhost:1420"]`), or `["*"]` for any origin
 ///
-/// Both arguments are required. Missing either one causes a compile-time panic.
+/// `ip` and `port` are required; omitting either is a compile error, as is an
+/// unrecognised argument name.
 ///
 /// # Constraints
 ///
 /// This macro **must** be applied to a function named `main`. Applying it to any
 /// other function name causes a compile-time panic.
+///
+/// # CORS
+///
+/// Without `allow_origins` the server emits no cross-origin headers at all, which
+/// is correct for a backend behind a reverse proxy and for any non-browser client:
+/// nothing enforces CORS but a browser, and a request with no `Origin` header is
+/// answered byte for byte as it was before this argument existed.
+///
+/// With it, two things change. `OPTIONS` — which is not a routable [`Method`] and
+/// used to fall through to `404` — is answered by the server itself, as a
+/// preflight when the request carries `Origin` and `Access-Control-Request-Method`
+/// and the origin is listed, and otherwise as a plain `204` naming what the path
+/// serves in an `Allow` header. And every response to a request from a listed
+/// origin, handler-generated or not, carries `Access-Control-Allow-Origin`.
+///
+/// Both halves are necessary. A browser making any request that is not [simple] —
+/// which includes every `fetch` with a JSON body — sends the preflight first and
+/// will not send the real request until it is answered; then it checks the real
+/// response's headers before letting the calling script read it.
+///
+/// Origins are matched in full and compared case-insensitively: scheme, host and
+/// port, with no trailing slash. `http://localhost:1420` and
+/// `http://127.0.0.1:1420` are different origins, and a page served from one is
+/// not served from the other.
+///
+/// ```ignore
+/// #[http_server(
+///     ip = "127.0.0.1",
+///     port = 8443,
+///     allow_origins = ["http://localhost:1420", "tauri://localhost"]
+/// )]
+/// async fn main() {}
+/// ```
+///
+/// Credentials are not enabled, and requested headers are echoed back on a
+/// preflight. See [`utils::cors::CorsConfig`] for what the policy can express
+/// beyond what this attribute currently exposes.
+///
+/// [simple]: https://developer.mozilla.org/docs/Glossary/CORS-safelisted_request_header
 ///
 /// # TLS
 ///
@@ -238,7 +281,7 @@ pub fn http_server(
     attr: proc_macro::TokenStream,
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let args = parse_macro_input!(attr as AttributeArgs);
+    let args = parse_macro_input!(attr as HttpServerArgs);
     let input_fn = parse_macro_input!(item as ItemFn);
     let sig = &input_fn.sig;
 
@@ -246,29 +289,9 @@ pub fn http_server(
         panic!("The http_server macro can only be applied to the main function.");
     }
 
-    let mut ip_lit = None;
-    let mut port_lit = None;
-
-    for arg in args.iter() {
-        if let NestedMeta::Meta(Meta::NameValue(nv)) = arg {
-            if let Lit::Str(lit_str) = &nv.lit
-                && nv.path.is_ident("ip")
-            {
-                ip_lit = Some(lit_str.value());
-            } else if let Lit::Int(lit_int) = &nv.lit
-                && nv.path.is_ident("port")
-            {
-                port_lit = Some(
-                    lit_int
-                        .base10_parse::<u16>()
-                        .expect("Given invalid port number"),
-                )
-            }
-        }
-    }
-
-    let ip_str = ip_lit.expect("Ip is not specified");
-    let port = port_lit.expect("Port is not specified");
+    let ip_str = args.ip;
+    let port = args.port;
+    let allow_origins = args.allow_origins;
 
     let expanded = quote! {
         // Every path below is absolute and routed through `embedded_web_server`, because
@@ -298,6 +321,18 @@ pub fn http_server(
 
             let acceptor = ::embedded_web_server::tokio_rustls::TlsAcceptor::from(
                 ::std::sync::Arc::new(server_config)
+            );
+
+            // Built once and shared: the policy is the same for every connection,
+            // and an `Arc` keeps a per-connection clone to a refcount bump rather
+            // than a copy of the origin list. An empty list yields a disabled
+            // policy, which adds no header to anything.
+            let cors = ::std::sync::Arc::new(
+                ::embedded_web_server::utils::cors::CorsConfig::new(
+                    &[#(#allow_origins),*],
+                    false,
+                    ::std::option::Option::None,
+                )
             );
 
             let addr = format!("{}:{}", #ip_str, #port);
@@ -362,6 +397,7 @@ pub fn http_server(
                 };
 
                 let acceptor = acceptor.clone();
+                let cors = ::std::sync::Arc::clone(&cors);
 
                 ::embedded_web_server::tokio::spawn(async move {
                     // Bound to a name, not to `_`: `let _ = permit` would drop it here
@@ -395,7 +431,8 @@ pub fn http_server(
                     // can reach them.
                     ::embedded_web_server::server::handle_connection(
                         &mut tls_stream,
-                        ::embedded_web_server::server::Limits::default()
+                        ::embedded_web_server::server::Limits::default(),
+                        &cors
                     ).await;
                 });
             }
