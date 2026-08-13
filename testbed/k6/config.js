@@ -71,6 +71,14 @@ export const ERROR_ROUTES = {
 
 export const USER_BODY = JSON.stringify({ name: 'grace', active: true });
 
+// Must match `allow_origins` in the `#[http_server]` attribute on sample-server's
+// main, for the same reason the URL must: the macro takes it as a literal.
+//
+// Only smoke.js sends an `Origin` header. Every other script omits it, so the
+// server treats those requests as same-origin and the CORS path costs them
+// nothing — the load figures are comparable to runs taken before it existed.
+export const ALLOWED_ORIGIN = 'http://localhost:1420';
+
 export const JSON_PARAMS = {
         headers: { 'Content-Type': 'application/json' },
 };
