@@ -44,14 +44,14 @@ fn an_empty_origin_list_is_a_disabled_policy() {
     // Permitting nothing and configuring nothing are the same thing, and the
     // alternative — an enabled policy that matches no origin — would differ only
     // in how confusing it is to debug.
-    assert!(!CorsConfig::new("", false, None).is_enabled());
-    assert!(!CorsConfig::new("   ", false, None).is_enabled());
-    assert!(!CorsConfig::new(",  ,", false, None).is_enabled());
+    assert!(!CorsConfig::new(&[], false, None).is_enabled());
+    assert!(!CorsConfig::new(&["   "], false, None).is_enabled());
+    assert!(!CorsConfig::new(&["", ""], false, None).is_enabled());
 }
 
 #[test]
 fn origins_are_split_and_trimmed() {
-    let cors = CorsConfig::new("  http://a.test ,http://b.test  ", false, None);
+    let cors = CorsConfig::new(&["  http://a.test ", "http://b.test  "], false, None);
 
     assert!(!cors.response_headers(&request_from("http://a.test")).is_empty());
     assert!(!cors.response_headers(&request_from("http://b.test")).is_empty());
@@ -63,14 +63,14 @@ fn origins_are_split_and_trimmed() {
 #[test]
 fn a_request_without_an_origin_gets_no_headers() {
     // Every non-browser client — curl, the reverse proxy, k6 — lands here.
-    let cors = CorsConfig::new("*", false, None);
+    let cors = CorsConfig::new(&["*"], false, None);
 
     assert!(cors.response_headers("GET /users HTTP/1.1\r\n\r\n").is_empty());
 }
 
 #[test]
 fn a_wildcard_policy_answers_with_a_literal_star_and_no_vary() {
-    let cors = CorsConfig::new("*", false, None);
+    let cors = CorsConfig::new(&["*"], false, None);
     let headers = cors.response_headers(&request_from(ORIGIN));
 
     assert_eq!(value_of(&headers, "Access-Control-Allow-Origin"), Some("*"));
@@ -81,7 +81,7 @@ fn a_wildcard_policy_answers_with_a_literal_star_and_no_vary() {
 
 #[test]
 fn a_listed_origin_is_echoed_and_marked_as_varying() {
-    let cors = CorsConfig::new(ORIGIN, false, None);
+    let cors = CorsConfig::new(&[ORIGIN], false, None);
     let headers = cors.response_headers(&request_from(ORIGIN));
 
     assert_eq!(value_of(&headers, "Access-Control-Allow-Origin"), Some(ORIGIN));
@@ -90,7 +90,7 @@ fn a_listed_origin_is_echoed_and_marked_as_varying() {
 
 #[test]
 fn an_unlisted_origin_gets_no_headers() {
-    let cors = CorsConfig::new(ORIGIN, false, None);
+    let cors = CorsConfig::new(&[ORIGIN], false, None);
 
     assert!(
         cors.response_headers(&request_from("http://evil.test"))
@@ -100,14 +100,14 @@ fn an_unlisted_origin_gets_no_headers() {
 
 #[test]
 fn origin_matching_ignores_case() {
-    let cors = CorsConfig::new("http://Localhost:1420", false, None);
+    let cors = CorsConfig::new(&["http://Localhost:1420"], false, None);
 
     assert!(!cors.response_headers(&request_from("http://localhost:1420")).is_empty());
 }
 
 #[test]
 fn credentials_are_announced_when_configured() {
-    let cors = CorsConfig::new(ORIGIN, true, None);
+    let cors = CorsConfig::new(&[ORIGIN], true, None);
     let headers = cors.response_headers(&request_from(ORIGIN));
 
     assert_eq!(
@@ -120,7 +120,7 @@ fn credentials_are_announced_when_configured() {
 fn a_credentialed_wildcard_echoes_the_origin_instead_of_a_star() {
     // A browser refuses `*` on a credentialed request, so a config that sent one
     // would fail every request it was meant to permit.
-    let cors = CorsConfig::new("*", true, None);
+    let cors = CorsConfig::new(&["*"], true, None);
     let headers = cors.response_headers(&request_from(ORIGIN));
 
     assert_eq!(value_of(&headers, "Access-Control-Allow-Origin"), Some(ORIGIN));
@@ -145,7 +145,7 @@ fn a_preflight_is_recognised_by_its_two_headers() {
 
 #[test]
 fn a_preflight_lists_the_methods_the_path_serves() {
-    let cors = CorsConfig::new(ORIGIN, false, None);
+    let cors = CorsConfig::new(&[ORIGIN], false, None);
 
     let headers = cors
         .preflight_headers(
@@ -165,7 +165,7 @@ fn a_preflight_for_an_unserved_method_still_lists_what_is_served() {
     // The browser compares its requested method against this list and blocks the
     // request itself. Echoing DELETE back would authorise a request the server
     // would then answer with 405.
-    let cors = CorsConfig::new(ORIGIN, false, None);
+    let cors = CorsConfig::new(&[ORIGIN], false, None);
 
     let headers = cors
         .preflight_headers(&preflight_from(ORIGIN, "DELETE", None), &[Method::GET])
@@ -176,7 +176,7 @@ fn a_preflight_for_an_unserved_method_still_lists_what_is_served() {
 
 #[test]
 fn requested_headers_are_echoed_by_default() {
-    let cors = CorsConfig::new(ORIGIN, false, None);
+    let cors = CorsConfig::new(&[ORIGIN], false, None);
 
     let headers = cors
         .preflight_headers(
@@ -193,7 +193,7 @@ fn requested_headers_are_echoed_by_default() {
 
 #[test]
 fn a_configured_header_list_overrides_the_echo() {
-    let cors = CorsConfig::new(ORIGIN, false, Some("content-type"));
+    let cors = CorsConfig::new(&[ORIGIN], false, Some(&["content-type"]));
 
     let headers = cors
         .preflight_headers(
@@ -210,7 +210,7 @@ fn a_configured_header_list_overrides_the_echo() {
 
 #[test]
 fn a_preflight_that_asked_for_no_headers_gets_no_allow_headers() {
-    let cors = CorsConfig::new(ORIGIN, false, None);
+    let cors = CorsConfig::new(&[ORIGIN], false, None);
 
     let headers = cors
         .preflight_headers(&preflight_from(ORIGIN, "POST", None), &[Method::POST])
@@ -221,7 +221,7 @@ fn a_preflight_that_asked_for_no_headers_gets_no_allow_headers() {
 
 #[test]
 fn a_preflight_carries_a_max_age() {
-    let cors = CorsConfig::new(ORIGIN, false, None);
+    let cors = CorsConfig::new(&[ORIGIN], false, None);
 
     let headers = cors
         .preflight_headers(&preflight_from(ORIGIN, "POST", None), &[Method::POST])
@@ -235,7 +235,7 @@ fn a_preflight_carries_a_max_age() {
 
 #[test]
 fn a_preflight_from_an_unlisted_origin_is_not_authorised() {
-    let cors = CorsConfig::new(ORIGIN, false, None);
+    let cors = CorsConfig::new(&[ORIGIN], false, None);
 
     assert!(
         cors.preflight_headers(

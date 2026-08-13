@@ -55,7 +55,7 @@ enum AllowedOrigins {
 /// ```
 /// use utils::cors::CorsConfig;
 ///
-/// let cors = CorsConfig::new("http://localhost:1420", false, None);
+/// let cors = CorsConfig::new(&["http://localhost:1420"], false, None);
 /// let request = "GET / HTTP/1.1\r\nOrigin: http://localhost:1420\r\n\r\n";
 ///
 /// let headers = cors.response_headers(request);
@@ -95,17 +95,19 @@ impl CorsConfig {
     ///
     /// # Parameters
     ///
-    /// - `allowed_origins` — a comma-separated list of origins (`"http://a.test,
-    ///   https://b.test"`), or `"*"` for any origin. Entries are trimmed; an empty
-    ///   or all-whitespace list produces a [`disabled`](CorsConfig::disabled)
-    ///   policy, since permitting nothing is what an empty allow-list means.
+    /// - `allowed_origins` — the origins to permit, each written in full
+    ///   (`"http://localhost:1420"` — scheme, host and port, no trailing slash),
+    ///   or a single `"*"` for any origin. Entries are trimmed and empty ones
+    ///   dropped; a list with nothing left in it produces a
+    ///   [`disabled`](CorsConfig::disabled) policy, since permitting nothing is
+    ///   what an empty allow-list means.
     /// - `allow_credentials` — whether to send `Access-Control-Allow-Credentials:
     ///   true`, which a browser requires before it will attach cookies to a
     ///   cross-origin request or let a script read the response to one.
-    /// - `allow_headers` — the value for `Access-Control-Allow-Headers`, or `None`
-    ///   to echo the preflight's `Access-Control-Request-Headers` back. Echoing
-    ///   permits whatever was asked for, which is the permissive default; naming
-    ///   the headers explicitly is the restrictive one.
+    /// - `allow_headers` — the headers to permit on a cross-origin request, or
+    ///   `None` to echo the preflight's `Access-Control-Request-Headers` back.
+    ///   Echoing permits whatever was asked for, which is the permissive default;
+    ///   naming the headers explicitly is the restrictive one.
     ///
     /// # `"*"` and credentials
     ///
@@ -122,39 +124,50 @@ impl CorsConfig {
     /// ```
     /// use utils::cors::CorsConfig;
     ///
-    /// let cors = CorsConfig::new("http://a.test, http://b.test", false, None);
+    /// let cors = CorsConfig::new(&["http://a.test", "http://b.test"], false, None);
     /// assert!(cors.is_enabled());
     ///
-    /// assert!(!CorsConfig::new("", false, None).is_enabled());
+    /// assert!(!CorsConfig::new(&[], false, None).is_enabled());
     /// ```
     pub fn new(
-        allowed_origins: &str,
+        allowed_origins: &[&str],
         allow_credentials: bool,
-        allow_headers: Option<&str>,
+        allow_headers: Option<&[&str]>,
     ) -> CorsConfig {
-        let allowed_origins = if allowed_origins.trim() == "*" {
+        let origins: Vec<String> = allowed_origins
+            .iter()
+            .map(|origin| origin.trim().to_string())
+            .filter(|origin| !origin.is_empty())
+            .collect();
+
+        let allowed_origins = if origins.is_empty() {
+            None
+        } else if origins.iter().any(|origin| origin == "*") {
+            // A wildcard alongside named origins is not a narrower policy than the
+            // wildcard alone, so treating the list as `Any` is what it already
+            // means rather than a liberty taken with it.
             Some(AllowedOrigins::Any)
         } else {
-            let origins: Vec<String> = allowed_origins
-                .split(',')
-                .map(|origin| origin.trim().to_string())
-                .filter(|origin| !origin.is_empty())
+            Some(AllowedOrigins::Only(origins))
+        };
+
+        let allow_headers = allow_headers.and_then(|headers| {
+            let headers: Vec<&str> = headers
+                .iter()
+                .map(|header| header.trim())
+                .filter(|header| !header.is_empty())
                 .collect();
 
-            if origins.is_empty() {
-                None
-            } else {
-                Some(AllowedOrigins::Only(origins))
-            }
-        };
+            // An empty list is the same as not configuring one: fall back to
+            // echoing, rather than emitting an empty header that permits nothing
+            // and reads like a bug.
+            (!headers.is_empty()).then(|| headers.join(", "))
+        });
 
         CorsConfig {
             allowed_origins,
             allow_credentials,
-            allow_headers: allow_headers
-                .map(str::trim)
-                .filter(|headers| !headers.is_empty())
-                .map(str::to_string),
+            allow_headers,
         }
     }
 
@@ -195,7 +208,7 @@ impl CorsConfig {
     /// ```
     /// use utils::cors::CorsConfig;
     ///
-    /// let cors = CorsConfig::new("*", false, None);
+    /// let cors = CorsConfig::new(&["*"], false, None);
     ///
     /// // No Origin header: not a cross-origin request, so nothing to authorise.
     /// assert!(cors.response_headers("GET / HTTP/1.1\r\n\r\n").is_empty());
@@ -233,7 +246,7 @@ impl CorsConfig {
     /// use utils::cors::CorsConfig;
     /// use utils::request::route::Method;
     ///
-    /// let cors = CorsConfig::new("http://localhost:1420", false, None);
+    /// let cors = CorsConfig::new(&["http://localhost:1420"], false, None);
     /// let preflight = "OPTIONS /users HTTP/1.1\r\n\
     ///                  Origin: http://localhost:1420\r\n\
     ///                  Access-Control-Request-Method: POST\r\n\
