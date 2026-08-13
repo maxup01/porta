@@ -449,11 +449,48 @@ pub fn methods_for_path(path: &str) -> Vec<Method> {
 /// assert!(extract_method_from_request("CONNECT /users HTTP/1.1").is_err());
 /// ```
 pub fn extract_method_from_request(request: &str) -> Result<Method, Error> {
+    Method::from_str(extract_method_token_from_request(request)?)
+}
+
+/// Extracts the HTTP verb from a raw request line **without** parsing it into a
+/// [`Method`].
+///
+/// [`Method`] covers only the verbs a handler can be registered for, so
+/// [`extract_method_from_request`] cannot distinguish `OPTIONS` — which the server
+/// answers itself — from `CONNECT`, which it does not support at all. Both come
+/// back as [`Error::InvalidData`]. This returns the token as written, so a caller
+/// can recognise the verbs it handles outside the route tables before falling
+/// through to routing.
+///
+/// The token is returned verbatim, not upper-cased: HTTP methods are
+/// case-sensitive (RFC 9110 §9.1), so comparisons should be exact. The
+/// case-insensitive matching in [`Method::from_str`] is a leniency this crate
+/// already offers and is left alone.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidData`] if the request line contains no whitespace.
+///
+/// # Examples
+///
+/// ```
+/// use utils::request::route::extract_method_token_from_request;
+///
+/// let method = extract_method_token_from_request("OPTIONS /users HTTP/1.1").unwrap();
+/// assert_eq!(method, "OPTIONS");
+///
+/// // Unlike `extract_method_from_request`, an unroutable verb is not an error here
+/// let method = extract_method_token_from_request("CONNECT /users HTTP/1.1").unwrap();
+/// assert_eq!(method, "CONNECT");
+///
+/// assert!(extract_method_token_from_request("MALFORMED").is_err());
+/// ```
+pub fn extract_method_token_from_request(request: &str) -> Result<&str, Error> {
     let (method, _) = request
         .split_once(' ')
         .ok_or(Error::InvalidData("Invalid request lines"))?;
 
-    Method::from_str(method)
+    Ok(method)
 }
 
 #[cfg(test)]
