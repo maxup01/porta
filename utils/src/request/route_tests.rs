@@ -377,3 +377,74 @@ fn literal_segment_wins_over_parameter() {
 
     assert_eq!(resolved(""), "param");
 }
+
+// ── methods_for_path ────────────────────────────────────────────────────
+
+/// The `Allow` header and `Access-Control-Allow-Methods` both need the list, in
+/// a stable order, not just the yes/no `path_exists` gives.
+#[test]
+fn methods_for_path_collects_every_verb_that_serves_it() {
+    fn handler(_: &str) -> String {
+        "ok".to_string()
+    }
+
+    register_route(Method::GET, "/allow-list/{id}", handler);
+    register_route(Method::DELETE, "/allow-list/{id}", handler);
+    register_route(Method::PUT, "/allow-list/{id}", handler);
+
+    assert_eq!(
+        methods_for_path("/allow-list/42"),
+        vec![Method::GET, Method::PUT, Method::DELETE],
+        "methods must come back in ROUTABLE_METHODS order, not table order"
+    );
+}
+
+#[test]
+fn methods_for_path_is_empty_when_nothing_serves_the_path() {
+    assert!(methods_for_path("/allow-list-nothing/here").is_empty());
+}
+
+#[test]
+fn methods_for_path_and_path_exists_agree() {
+    fn handler(_: &str) -> String {
+        "ok".to_string()
+    }
+
+    register_route(Method::PATCH, "/allow-agreement/thing", handler);
+
+    assert_eq!(
+        path_exists("/allow-agreement/thing"),
+        !methods_for_path("/allow-agreement/thing").is_empty()
+    );
+    assert_eq!(
+        path_exists("/allow-agreement/absent"),
+        !methods_for_path("/allow-agreement/absent").is_empty()
+    );
+}
+
+// ── extract_method_token_from_request ───────────────────────────────────
+
+/// The verbs `Method` refuses are exactly the ones this has to survive: OPTIONS
+/// is answered by the server itself, and cannot be recognised through a parser
+/// that rejects it.
+#[test]
+fn method_token_survives_verbs_that_do_not_parse() {
+    assert_eq!(
+        extract_method_token_from_request("OPTIONS /users HTTP/1.1").unwrap(),
+        "OPTIONS"
+    );
+    assert!(extract_method_from_request("OPTIONS /users HTTP/1.1").is_err());
+}
+
+#[test]
+fn method_token_is_returned_verbatim() {
+    assert_eq!(
+        extract_method_token_from_request("get /users HTTP/1.1").unwrap(),
+        "get"
+    );
+}
+
+#[test]
+fn method_token_needs_a_request_line() {
+    assert!(extract_method_token_from_request("MALFORMED").is_err());
+}
