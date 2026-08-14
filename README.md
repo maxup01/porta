@@ -134,14 +134,32 @@ HTTP/1.1 <code> <reason>
 Content-Type: application/json
 Content-Length: <byte_length>
 Date: <rfc-date>
-Connection: close
 
 <json_body>
 ```
 
-`Connection: close` is sent on every response because a connection serves exactly one request.
+No `Connection` header appears, because HTTP/1.1 connections are persistent unless a response says otherwise. `Connection: close` is added only to the last response on a connection — see [Connections](#connections).
 
 A `204 No Content` response is the exception: the body is discarded and both content headers are omitted, as RFC 9110 requires.
+
+## Connections
+
+A connection serves as many requests as the client wants to send, so a client making several requests pays one TLS handshake rather than one per request. Requests pipelined without waiting for the previous answer are answered in order.
+
+The connection ends when any of these happens, and the response before it carries `Connection: close`:
+
+| Cause | Bound |
+| --- | --- |
+| The client asked to close | `Connection: close`, or HTTP/1.0 without `Connection: keep-alive` |
+| The client went quiet between requests | 15 seconds |
+| The connection served its budget | 100 requests |
+| A request was refused | `400`, `408`, `413` |
+
+A refused request ends the connection because nothing after it can be framed: an oversized body is still arriving, and a request that did not parse has no length to skip past. A `404` or `405` is not a refusal — the request was well-formed, so the connection stays open.
+
+An idle timeout produces no response at all. The client is very likely closing the connection at the same moment, and there is no fault to report.
+
+Persistence is not free: a connection holds one of the server's 512 slots for as long as it lives, not just while a request is in flight. The idle timeout is what stops quiet clients from crowding out live ones.
 
 ## The `#[http_server]` macro
 
@@ -195,7 +213,7 @@ Access-Control-Allow-Headers: content-type
 Access-Control-Max-Age: 600
 ```
 
-`Access-Control-Allow-Methods` lists what the path actually serves, so a preflight for `DELETE` against a `GET`-only route comes back listing `GET` and the browser blocks the request itself. `Access-Control-Allow-Headers` echoes what was asked for. The result is cacheable for ten minutes, which matters here: this server closes after one request, so an uncached preflight doubles the connection count.
+`Access-Control-Allow-Methods` lists what the path actually serves, so a preflight for `DELETE` against a `GET`-only route comes back listing `GET` and the browser blocks the request itself. `Access-Control-Allow-Headers` echoes what was asked for. The result is cacheable for ten minutes, so a browser pays for the preflight once per origin, method and header set rather than once per request.
 
 **The response.** Every answer to a request from a listed origin carries `Access-Control-Allow-Origin`, whether it came from a handler or from the server — a `404` a script cannot read shows up in the console as an opaque load failure rather than as a `404`.
 
@@ -211,11 +229,15 @@ Credentialed requests (cookies, `Authorization`) are not enabled through this at
 |-------|-------|----------|
 | Request size (headers + body) | 1 MiB | `413 Payload Too Large` |
 | Request duration | 30 s | `408 Request Timeout` |
+| Idle time between requests | 15 s | connection closed, no response |
+| Requests per connection | 100 | connection closed after the 100th answer |
 | TLS handshake duration | 10 s | connection dropped |
 | Concurrent connections | 512 | client waits in the accept backlog |
 | Headers per request | 32 | `400 Bad Request` |
 
-The request deadline is a single budget shared by the header and body reads, so it cannot be extended by pacing bytes slowly.
+The request deadline is a single budget shared by the header and body reads, so it cannot be extended by pacing bytes slowly. It starts at the request's first byte, so time a connection spends idle is not charged to the request that follows.
+
+The request-size limit bounds *buffered* bytes rather than strictly one request: a client that pipelines spends the same budget on everything it has sent that has not been answered yet. For a client that waits for each response, the two are the same number.
 
 Peak memory is roughly `connections × 3 × request size` — the request buffer, the copied body and the deserialized value are all live at once — so the size and connection limits are one decision rather than two.
 
@@ -223,7 +245,7 @@ These are currently compile-time constants in `server::Limits`; the macro passes
 
 ## Security & limitations
 
-This server is intended to run as an **internal service behind a reverse proxy** (e.g. nginx, Caddy, Traefik, or a cloud load balancer). The proxy is expected to terminate public TLS with a CA-issued certificate and handle concerns like authentication, rate limiting, request buffering, and keep-alive — the embedded server itself stays minimal and trusts that it sits on a private network.
+This server is intended to run as an **internal service behind a reverse proxy** (e.g. nginx, Caddy, Traefik, or a cloud load balancer). The proxy is expected to terminate public TLS with a CA-issued certificate and handle concerns like authentication, rate limiting and request buffering — the embedded server itself stays minimal and trusts that it sits on a private network.
 
 The server is **TLS-only**. Encryption is always on, but the certificate is **self-signed and regenerated on every startup**, with Subject Alternative Names set to `"embedded-http-server-rs"` and the provided `ip`. Connections are encrypted, but the cert is **not browser-trusted** — this is by design. The self-signed cert secures the hop between the reverse proxy and this server on a trusted internal network; the proxy presents a CA-issued certificate to the outside world. The server is not meant to be exposed directly to the public internet.
 
@@ -231,10 +253,9 @@ Other constraints worth knowing:
 
 - **Request bodies must be valid UTF-8.** Binary payloads are rejected with `400 Bad Request`, so files have to be encoded — base64 inside JSON, for instance. There is no `multipart/form-data` support and no streaming; the whole request is buffered in memory.
 - **`Transfer-Encoding: chunked` is not supported.** A chunked request is dispatched with an empty body rather than rejected.
-- **Each connection handles exactly one request** — no keep-alive, no pipelining. Bytes arriving after `Content-Length` is satisfied are discarded.
-- **Handlers are synchronous** and cannot return `Result`. Blocking work inside one occupies a runtime worker.
-- **A panicking handler** drops its connection without a response.
-- Every response is followed by an explicit TLS `close_notify`, so peers can distinguish a normal end of stream from a truncated one.
+- **A panicking handler** drops its connection without a response, and takes any requests already pipelined behind it with it.
+- **Handlers are synchronous** and cannot return `Result`. Blocking work inside one occupies a runtime worker, and on a persistent connection it also stalls every later request on that same connection.
+- A closed connection is followed by an explicit TLS `close_notify`, so peers can distinguish a normal end of stream from a truncated one.
 - Failed TLS handshakes and failed writes do not panic; the connection is dropped and the accept loop continues. Failing to bind the address at startup is fatal.
 - Sustained `accept` failure — file-descriptor exhaustion, say — is logged once at onset and once on recovery with a count, rather than on every retry.
 
