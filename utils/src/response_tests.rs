@@ -476,37 +476,52 @@ fn format_response_204_discards_the_serialized_body() {
 }
 
 #[test]
-fn format_response_204_still_carries_date_and_connection() {
+fn format_response_204_still_carries_date() {
     let raw = formatted(simple_body(), HttpStatus::NoContent);
 
     assert!(raw.contains("Date: "), "204 lost its Date header");
-    assert!(
-        raw.contains("Connection: close\r\n"),
-        "204 lost its Connection header"
-    );
 }
 
 // ── Connection handling ──────────────────────────────────────────────────────
+//
+// Serialization emits no `Connection` header at all. An HTTP/1.1 connection is
+// persistent unless something says otherwise, so silence here is the accurate
+// answer: whether this particular response is the last one is a fact about the
+// connection, and only the connection loop in `server` holds it. These tests
+// exist to catch the header being reintroduced by a well-meaning edit.
 
 #[test]
-fn every_status_response_declares_connection_close() {
+fn no_status_response_decides_the_connection_lifetime() {
     for status in ALL_STATUSES {
         let raw = status_response(status);
 
         assert!(
-            raw.contains("Connection: close\r\n"),
-            "missing Connection: close for {status}"
+            !raw.contains("Connection:"),
+            "{status} pre-empts the connection loop's decision"
         );
     }
 }
 
 #[test]
-fn format_response_declares_connection_close() {
+fn format_response_leaves_the_connection_lifetime_to_the_server() {
     let raw = formatted(simple_body(), HttpStatus::Ok);
 
     assert!(
+        !raw.contains("Connection:"),
+        "a serialized response cannot know whether it is the last one"
+    );
+}
+
+#[test]
+fn a_closing_response_is_built_by_adding_the_header() {
+    let raw = with_headers(
+        &formatted(simple_body(), HttpStatus::Ok),
+        &[("Connection", "close".to_string())],
+    );
+
+    assert!(
         raw.contains("Connection: close\r\n"),
-        "the server closes after one request but does not say so"
+        "the seam the connection loop closes through is broken: {raw}"
     );
 }
 

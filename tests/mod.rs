@@ -313,8 +313,11 @@ fn successful_response_carries_framing_headers() {
     let response = get_item("GET /items/1");
 
     assert!(response.contains("Content-Type: application/json\r\n"));
-    assert!(response.contains("Connection: close\r\n"));
     assert!(response.contains("Date: "));
+
+    // A handler's own output says nothing about the connection. Whether this is
+    // the last response on it is decided by `server`, after the handler returns.
+    assert!(!response.contains("Connection:"), "{response}");
 }
 
 #[test]
@@ -322,8 +325,8 @@ fn error_response_carries_framing_headers() {
     let response = get_item("GET /items/abc");
 
     assert!(response.contains("Content-Type: text/plain\r\n"));
-    assert!(response.contains("Connection: close\r\n"));
     assert!(response.contains("Date: "));
+    assert!(!response.contains("Connection:"), "{response}");
 }
 
 #[test]
