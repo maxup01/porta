@@ -22,12 +22,15 @@ export const TLS_OPTIONS = {
         insecureSkipTLSVerify: true,
 };
 
-// The server closes after a single request and says so with `Connection: close`,
-// so a connection is never reusable. Declaring that here makes k6 stop trying and
-// makes the cost explicit: every request in every scenario pays a full TLS
-// handshake. That handshake, not routing, dominates the numbers below.
+// Connections are persistent, so a VU making many requests pays one TLS handshake
+// rather than one per request. Left at k6's default — reuse — because that is what
+// a real client does and what the numbers below should reflect.
+//
+// Set `K6_NO_CONNECTION_REUSE=true` to measure the other side of it: every request
+// forced through a fresh handshake, which is what this server did before keep-alive
+// existed. The difference between the two runs is what persistence bought.
 export const CONNECTION_OPTIONS = {
-        noConnectionReuse: true,
+        noConnectionReuse: false,
 };
 
 export const BASE_OPTIONS = {
