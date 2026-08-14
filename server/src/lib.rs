@@ -33,16 +33,46 @@ const MAX_HEADERS: usize = 32;
 /// by the caller. Peak memory is roughly the product of the two multiplied again by
 /// three, since the request buffer, the copied body and the deserialized value are
 /// all live at once.
+///
+/// The remaining three exist because connections persist. A connection that serves
+/// many requests holds a caller-issued slot for as long as it lives, so how long it
+/// may sit idle and how many requests it may serve are limits in their own right —
+/// without them, a client that opens connections and never speaks again costs one
+/// socket each and takes the server's capacity with it.
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
-    /// Total bytes accepted for one request, headers plus body. Exceeding it is
+    /// Total bytes buffered for one connection, headers plus body. Exceeding it is
     /// answered with `413 Payload Too Large`.
+    ///
+    /// It is a ceiling on buffered bytes rather than strictly on one request: a
+    /// client that pipelines spends the same budget on whatever it has sent that
+    /// has not been answered yet. For a client that waits for each response — every
+    /// browser, and every HTTP library by default — the two are the same number.
     pub max_request_bytes: usize,
 
-    /// Budget for delivering a whole request, measured from the moment the
-    /// connection is handed over. It is a single deadline shared by the header and
-    /// body reads, so it cannot be extended by pacing the bytes.
+    /// Budget for delivering a whole request, measured from the arrival of its
+    /// first byte. It is a single deadline shared by the header and body reads, so
+    /// it cannot be extended by pacing the bytes.
+    ///
+    /// It starts at the first byte rather than at the read, so time a connection
+    /// spends idle between requests is not charged to the request that follows.
     pub request_timeout: Duration,
+
+    /// How long a connection may sit with no request in progress before the server
+    /// closes it.
+    ///
+    /// This is the cost of persistence: the slot stays taken while the client
+    /// thinks. Too short and every client pays a fresh handshake anyway; too long
+    /// and idle peers crowd out live ones.
+    pub idle_timeout: Duration,
+
+    /// How many requests one connection may serve before the server closes it.
+    ///
+    /// A backstop rather than a tuning knob. It caps the damage from any per-
+    /// connection state that grows, and guarantees a long-lived client eventually
+    /// re-resolves DNS and re-checks the certificate instead of pinning one socket
+    /// indefinitely.
+    pub max_requests_per_connection: usize,
 }
 
 impl Default for Limits {
@@ -50,6 +80,8 @@ impl Default for Limits {
         Limits {
             max_request_bytes: 1024 * 1024,
             request_timeout: Duration::from_secs(30),
+            idle_timeout: Duration::from_secs(15),
+            max_requests_per_connection: 100,
         }
     }
 }
@@ -57,21 +89,47 @@ impl Default for Limits {
 /// What reading a request produced.
 enum ReadOutcome {
     /// A complete, well-formed request.
-    Request(String),
+    Request {
+        /// The request itself, headers and body, without any bytes belonging to
+        /// whatever the client sent after it.
+        request: String,
+
+        /// Whether the client is willing to reuse the connection. Persistence
+        /// needs both ends to agree, and this is the client's half of it.
+        client_persists: bool,
+    },
 
     /// The request was refused, and the peer should be told why.
     Reject(HttpStatus),
 
-    /// The peer went away or the transport failed. There is nobody left to answer.
+    /// The peer went away, went quiet, or the transport failed. There is nobody
+    /// left to answer.
     Abandon,
 }
 
-/// Reads one request from `stream`, answers it, and closes the stream.
+/// Why one read stopped short.
+enum ReadError {
+    /// The deadline passed. What that means depends on whether a request was
+    /// already in progress, so the caller decides rather than this.
+    Timeout,
+
+    /// The transport failed. Nothing more will arrive and nothing can be sent.
+    Closed,
+}
+
+/// Serves requests from `stream` until neither side wants another, then closes it.
 ///
-/// A connection serves exactly one request. On any exit path the stream is shut
-/// down explicitly, which is what emits the TLS `close_notify` when the stream is a
-/// TLS one — dropping it would skip that, because shutdown is an async write and
-/// `Drop` is synchronous.
+/// The connection is persistent, as HTTP/1.1 requires unless something says
+/// otherwise. It ends when the client hangs up, when it asks to close, when it goes
+/// quiet for `limits.idle_timeout`, when a request is refused, or when
+/// `limits.max_requests_per_connection` is reached — and the last response the
+/// server sends before any of those carries `Connection: close`, so the client
+/// learns the connection is finished from the response rather than from a failed
+/// write on its next request.
+///
+/// On every exit path the stream is shut down explicitly, which is what emits the
+/// TLS `close_notify` when the stream is a TLS one — dropping it would skip that,
+/// because shutdown is an async write and `Drop` is synchronous.
 ///
 /// `cors` is the policy the server was configured with. Pass
 /// [`CorsConfig::disabled`] to answer exactly as this server did before CORS
@@ -80,20 +138,64 @@ pub async fn handle_connection<S>(stream: &mut S, limits: Limits, cors: &CorsCon
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    // Taken before the first read so that the budget covers the request as a whole
-    // rather than resetting on every chunk.
-    let deadline = Instant::now() + limits.request_timeout;
+    // Outlives a single request on purpose. A read returns whatever bytes have
+    // arrived, which for a pipelining client is the tail of one request and the
+    // head of the next; that tail stays here and is the first thing parsed on the
+    // following pass.
+    let mut buffered: Vec<u8> = Vec::new();
 
-    let request = match read_request(stream, limits, deadline).await {
-        ReadOutcome::Request(request) => request,
-        ReadOutcome::Reject(status) => {
-            respond(stream, &status_response(status)).await;
+    for request_number in 1..=limits.max_requests_per_connection {
+        let (request, client_persists) = match read_request(stream, limits, &mut buffered).await {
+            ReadOutcome::Request {
+                request,
+                client_persists,
+            } => (request, client_persists),
+
+            // A refused request leaves the stream at an unknown offset — a body
+            // that was too large is still arriving, and a request that did not
+            // parse has no length to skip. Nothing after it can be framed, so the
+            // answer is also the goodbye.
+            ReadOutcome::Reject(status) => {
+                respond(stream, &closing(status_response(status))).await;
+                break;
+            }
+
+            ReadOutcome::Abandon => break,
+        };
+
+        let response = dispatch(&request, cors);
+
+        // Either side may end it: the client by saying so, the server by having
+        // spent the budget.
+        let last = !client_persists || request_number == limits.max_requests_per_connection;
+
+        let written = if last {
+            respond(stream, &closing(response)).await
+        } else {
+            respond(stream, &response).await
+        };
+
+        // The write failed, so the peer is gone and there is nothing to shut down.
+        if !written {
             return;
         }
-        ReadOutcome::Abandon => return,
-    };
 
-    respond(stream, &dispatch(&request, cors)).await;
+        if last {
+            break;
+        }
+    }
+
+    let _ = stream.shutdown().await;
+}
+
+/// Marks `response` as the last one on its connection.
+///
+/// HTTP/1.1 treats a connection as persistent unless a response says otherwise, so
+/// this header is the only thing that distinguishes a server that is about to close
+/// from one that is waiting for more. Sending it is what lets the client reuse the
+/// socket for every response that does *not* carry it.
+fn closing(response: String) -> String {
+    with_headers(&response, &[("Connection", "close".to_string())])
 }
 
 /// Resolves a raw request to a response, without touching the transport.
@@ -198,53 +300,94 @@ fn allow_header_value(allowed_methods: &[Method]) -> String {
         .join(", ")
 }
 
-/// Reads until a complete request has arrived, or until something says stop.
+/// Reads one request out of `buffered`, refilling it from `stream` as needed.
 ///
 /// A single read is not a request: TLS record boundaries and TCP segmentation split
 /// the byte stream at arbitrary points. The header block is read to completion
 /// first, then exactly as many body bytes as `Content-Length` declares.
-async fn read_request<S>(stream: &mut S, limits: Limits, deadline: Instant) -> ReadOutcome
+///
+/// `buffered` is owned by the connection rather than by one request, and on return
+/// it holds exactly the bytes that arrived after the request being returned. That
+/// is what makes pipelining safe: a client is entitled to send its next request
+/// without waiting, and those bytes land in the same read as the tail of this one.
+/// Discarding them would silently lose a request the client believes it sent.
+///
+/// Because it is parsed before anything is read, a request already sitting in
+/// `buffered` is answered without touching the stream at all.
+///
+/// # Deadlines
+///
+/// Two, and the distinction matters. Waiting for a request to *begin* is bounded by
+/// `idle_timeout` and ends the connection silently — an idle persistent connection
+/// is not a fault, and the client is very likely closing it at the same moment.
+/// Waiting for a request already in progress to *finish* is bounded by
+/// `request_timeout` and is answered `408`, because half a request is a fault.
+async fn read_request<S>(stream: &mut S, limits: Limits, buffered: &mut Vec<u8>) -> ReadOutcome
 where
     S: AsyncRead + Unpin,
 {
-    let mut data: Vec<u8> = Vec::new();
-    let mut buffer = [0u8; READ_CHUNK_BYTES];
+    let mut chunk = [0u8; READ_CHUNK_BYTES];
 
-    let (header_len, content_length) = loop {
-        let n = match read_chunk(stream, &mut buffer, deadline).await {
-            Ok(0) => return ReadOutcome::Abandon,
-            Ok(n) => n,
-            Err(outcome) => return outcome,
+    let idle_deadline = Instant::now() + limits.idle_timeout;
+
+    // `None` until the first byte of this request is in hand. Bytes carried over
+    // from the previous read mean it has already begun.
+    let mut request_deadline =
+        (!buffered.is_empty()).then(|| Instant::now() + limits.request_timeout);
+
+    let (header_len, content_length, client_persists) = loop {
+        // Scoped because the parse borrows `buffered`, which the read below needs
+        // mutably. Only Copy values leave.
+        let parsed = {
+            let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
+            let mut parsed_request = httparse::Request::new(&mut headers);
+
+            match parsed_request.parse(buffered) {
+                Ok(httparse::Status::Complete(header_len)) => {
+                    // Absent, unparseable or duplicated Content-Length is treated as
+                    // no body. Chunked transfer encoding is not supported, so such a
+                    // request is dispatched with an empty body rather than rejected.
+                    let content_length = header_value(&parsed_request, "content-length")
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+
+                    let client_persists = client_persists(
+                        parsed_request.version,
+                        header_value(&parsed_request, "connection"),
+                    );
+
+                    Some((header_len, content_length, client_persists))
+                }
+                Ok(httparse::Status::Partial) => None,
+                Err(_) => return ReadOutcome::Reject(HttpStatus::BadRequest),
+            }
         };
 
-        data.extend_from_slice(&buffer[..n]);
-
-        if data.len() > limits.max_request_bytes {
-            return ReadOutcome::Reject(HttpStatus::PayloadTooLarge);
+        if let Some(parsed) = parsed {
+            break parsed;
         }
 
-        let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
-        let mut parsed_request = httparse::Request::new(&mut headers);
+        let deadline = request_deadline.unwrap_or(idle_deadline);
 
-        // `parsed_request` borrows `data`, so only Copy values may leave this match —
-        // the next iteration needs `data` mutable again.
-        match parsed_request.parse(&data) {
-            Ok(httparse::Status::Complete(header_len)) => {
-                // Absent, unparseable or duplicated Content-Length is treated as no
-                // body. Chunked transfer encoding is not supported, so such a request
-                // is dispatched with an empty body rather than rejected.
-                let content_length = parsed_request
-                    .headers
-                    .iter()
-                    .find(|header| header.name.eq_ignore_ascii_case("content-length"))
-                    .and_then(|header| std::str::from_utf8(header.value).ok())
-                    .and_then(|value| value.trim().parse::<usize>().ok())
-                    .unwrap_or(0);
-
-                break (header_len, content_length);
+        match read_chunk(stream, &mut chunk, deadline).await {
+            // EOF. Between requests this is the client closing a connection it is
+            // done with; mid-request it hung up early. Neither is answerable.
+            Ok(0) => return ReadOutcome::Abandon,
+            Ok(n) => {
+                request_deadline.get_or_insert_with(|| Instant::now() + limits.request_timeout);
+                buffered.extend_from_slice(&chunk[..n]);
             }
-            Ok(httparse::Status::Partial) => continue,
-            Err(_) => return ReadOutcome::Reject(HttpStatus::BadRequest),
+            Err(ReadError::Closed) => return ReadOutcome::Abandon,
+            Err(ReadError::Timeout) => {
+                return match request_deadline {
+                    Some(_) => ReadOutcome::Reject(HttpStatus::RequestTimeout),
+                    None => ReadOutcome::Abandon,
+                };
+            }
+        }
+
+        if buffered.len() > limits.max_request_bytes {
+            return ReadOutcome::Reject(HttpStatus::PayloadTooLarge);
         }
     };
 
@@ -255,56 +398,100 @@ where
         _ => return ReadOutcome::Reject(HttpStatus::PayloadTooLarge),
     };
 
-    while data.len() < total_len {
-        let n = match read_chunk(stream, &mut buffer, deadline).await {
+    while buffered.len() < total_len {
+        let deadline = request_deadline.unwrap_or(idle_deadline);
+
+        match read_chunk(stream, &mut chunk, deadline).await {
             // EOF before the declared body arrived: the client hung up mid-request.
             Ok(0) => return ReadOutcome::Abandon,
-            Ok(n) => n,
-            Err(outcome) => return outcome,
-        };
-
-        data.extend_from_slice(&buffer[..n]);
+            Ok(n) => buffered.extend_from_slice(&chunk[..n]),
+            Err(ReadError::Closed) => return ReadOutcome::Abandon,
+            Err(ReadError::Timeout) => return ReadOutcome::Reject(HttpStatus::RequestTimeout),
+        }
     }
 
-    // Anything past Content-Length belongs to a pipelined request, and this server
-    // answers one request per connection.
-    data.truncate(total_len);
+    // Splits the request off and leaves the rest — the head of whatever the client
+    // pipelined — in place for the next call.
+    let request: Vec<u8> = buffered.drain(..total_len).collect();
 
     // The request is complete, so a decoding failure is genuinely invalid UTF-8
     // rather than a multi-byte character split across two reads.
-    match String::from_utf8(data) {
-        Ok(request) => ReadOutcome::Request(request),
+    match String::from_utf8(request) {
+        Ok(request) => ReadOutcome::Request {
+            request,
+            client_persists,
+        },
         Err(_) => ReadOutcome::Reject(HttpStatus::BadRequest),
     }
 }
 
-/// One deadline-bounded read. `Err` carries the outcome the caller should return.
+/// First value of `name` in a parsed request, as text, or `None` if it is absent or
+/// not UTF-8.
+fn header_value<'a>(request: &httparse::Request<'_, 'a>, name: &str) -> Option<&'a str> {
+    request
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case(name))
+        .and_then(|header| std::str::from_utf8(header.value).ok())
+}
+
+/// Whether the client is willing to reuse this connection.
+///
+/// The default flipped between HTTP versions, and both are still on the wire, so
+/// the version decides what silence means: HTTP/1.1 persists unless it says `close`
+/// (RFC 9112 §9.3), HTTP/1.0 closes unless it says `keep-alive`. An unrecognised
+/// version is treated as closing, since guessing wrong the other way desynchronises
+/// a connection rather than merely costing a handshake.
+///
+/// `connection` is a comma-separated token list, so a bare `contains` would match
+/// `close` inside a longer token. It is split before comparison.
+fn client_persists(version: Option<u8>, connection: Option<&str>) -> bool {
+    let has_token = |wanted: &str| {
+        connection.is_some_and(|value| {
+            value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case(wanted))
+        })
+    };
+
+    match version {
+        _ if has_token("close") => false,
+        Some(1) => true,
+        Some(0) => has_token("keep-alive"),
+        _ => false,
+    }
+}
+
+/// One deadline-bounded read. `Ok(0)` is EOF; `Err` says why nothing was read.
 async fn read_chunk<S>(
     stream: &mut S,
     buffer: &mut [u8],
     deadline: Instant,
-) -> Result<usize, ReadOutcome>
+) -> Result<usize, ReadError>
 where
     S: AsyncRead + Unpin,
 {
     match tokio::time::timeout_at(deadline, stream.read(buffer)).await {
         Ok(Ok(n)) => Ok(n),
-        Ok(Err(_)) => Err(ReadOutcome::Abandon),
-        Err(_) => Err(ReadOutcome::Reject(HttpStatus::RequestTimeout)),
+        Ok(Err(_)) => Err(ReadError::Closed),
+        Err(_) => Err(ReadError::Timeout),
     }
 }
 
-/// Writes a response and closes the stream cleanly.
+/// Writes a response, returning whether it reached the peer.
 ///
-/// A failed write means the peer is already gone, so there is nothing left to shut
-/// down — and nothing worth panicking about.
-async fn respond<S>(stream: &mut S, message: &str)
+/// The stream is left open: on a persistent connection the next request arrives
+/// through it, and shutting down here is what made the previous one-request-per-
+/// connection server unable to serve a second. [`handle_connection`] shuts down
+/// once, when the loop is over.
+///
+/// A failed write means the peer is already gone — nothing worth panicking about,
+/// but the caller should stop rather than write again.
+async fn respond<S>(stream: &mut S, message: &str) -> bool
 where
     S: AsyncWrite + Unpin,
 {
-    if stream.write_all(message.as_bytes()).await.is_ok() {
-        let _ = stream.shutdown().await;
-    }
+    stream.write_all(message.as_bytes()).await.is_ok()
 }
 
 #[cfg(test)]

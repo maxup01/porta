@@ -261,16 +261,26 @@ pub fn patch(
 /// - `Transfer-Encoding: chunked` is not supported. A chunked request is dispatched
 ///   with an empty body rather than being rejected.
 /// - A connection has 10 seconds to complete the TLS handshake and 30 seconds to
-///   deliver a whole request. The request budget is a single deadline shared by the
-///   header and body reads, so it cannot be extended by pacing the bytes; expiry is
-///   answered with `408 Request Timeout`. Neither limit is configurable yet.
-/// - Each connection handles exactly one request (no keep-alive or pipelining).
+///   deliver a whole request, measured from that request's first byte. The request
+///   budget is a single deadline shared by the header and body reads, so it cannot
+///   be extended by pacing the bytes; expiry is answered with `408 Request Timeout`.
+///   None of these limits is configurable yet.
+/// - Connections are persistent, as HTTP/1.1 requires. One connection serves up to
+///   100 requests and may sit idle for 15 seconds between them, so a client that
+///   makes several requests pays one TLS handshake rather than one each. Pipelined
+///   requests are answered in order. The connection ends when the client asks it to,
+///   when it goes quiet, when either bound is reached, or when a request is refused
+///   — and the last response carries `Connection: close` so the client learns of it
+///   from the answer rather than from a failed write.
+/// - Persistence has a cost the connection ceiling has to absorb: a slot is held for
+///   as long as the connection lives, not just while a request is in flight, so the
+///   idle timeout is what keeps quiet peers from crowding out live ones.
 /// - Neither a failed TLS handshake nor a failed write panics. Both mean the peer is
 ///   unreachable, so the task drops that one connection and returns; the accept loop
 ///   keeps running.
-/// - Every response is followed by a TLS `close_notify` via an explicit `shutdown`,
-///   which flushes rustls' buffered records and marks the stream as ended on purpose
-///   rather than truncated.
+/// - A closed connection is followed by a TLS `close_notify` via an explicit
+///   `shutdown`, which flushes rustls' buffered records and marks the stream as ended
+///   on purpose rather than truncated.
 /// - Failing to bind the address at startup is fatal. Errors from `accept` are not:
 ///   they are retried after a short pause. Only the first failure in a run is logged,
 ///   with a second line on recovery reporting how many followed it — a sustained

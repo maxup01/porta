@@ -85,11 +85,40 @@ export default function() {
         const index = http.get(`${BASE_URL}/`);
 
         check(index, {
-                'declares Connection: close': (r) =>
-                        (r.headers['Connection'] || '').toLowerCase() === 'close',
+                // HTTP/1.1 is persistent by default, so silence here is the server
+                // saying the connection is still usable. Saying `close` would mean
+                // the keep-alive loop had given up on a request it answered fine.
+                'leaves the connection open': (r) =>
+                        (r.headers['Connection'] || '').toLowerCase() !== 'close',
                 'sends a Date header': (r) => r.headers['Date'] !== undefined,
                 'serves JSON from a handler': (r) =>
                         (r.headers['Content-Type'] || '').includes('application/json'),
+        });
+
+        // Two requests down one connection. k6 reuses connections per VU by default,
+        // so the second of these rides the first's TLS session — the whole point of
+        // keep-alive, and something no Rust test can observe because none of them
+        // has a real socket underneath.
+        const firstOfPair = http.get(`${BASE_URL}/`);
+        const secondOfPair = http.get(`${BASE_URL}/`);
+
+        check({ firstOfPair, secondOfPair }, {
+                'a reused connection still answers': () =>
+                        firstOfPair.status === 200 && secondOfPair.status === 200,
+                'a reused connection skips the handshake': () =>
+                        secondOfPair.timings.connecting === 0 &&
+                        secondOfPair.timings.tls_handshaking === 0,
+        });
+
+        // The client's half of the negotiation. Asking to close must be obeyed, and
+        // the server has to say so rather than leaving the client to find out.
+        const closing = http.get(`${BASE_URL}/`, {
+                headers: { Connection: 'close' },
+        });
+
+        check(closing, {
+                'a client asking to close is told the connection ends': (r) =>
+                        (r.headers['Connection'] || '').toLowerCase() === 'close',
         });
 
         // 204 is the one status where the body must not be sent at all. The handler

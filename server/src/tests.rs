@@ -1,6 +1,21 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// The production defaults, with the idle timeout cut to something a test suite
+/// can wait for.
+///
+/// Connections persist, so the server does not close one until the client stops
+/// using it. A test whose client writes a request and then only reads would
+/// otherwise sit out the full fifteen seconds before the server gave up on it.
+/// Every test that means to hold a connection open does so deliberately, and this
+/// bounds the ones that do not.
+fn limits() -> Limits {
+    Limits {
+        idle_timeout: std::time::Duration::from_millis(100),
+        ..Limits::default()
+    }
+}
+
 /// Drives `handle_connection` over an in-memory pipe.
 ///
 /// `client` is handed to the caller's closure, which plays the peer: it writes
@@ -20,6 +35,33 @@ where
     F: FnOnce(tokio::io::DuplexStream) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = String> + Send + 'static,
 {
+    exchange_returning_with_cors(limits, cors, play_client).await
+}
+
+/// [`exchange`] for a client that returns something other than one response.
+///
+/// A connection that serves several requests produces several responses, and the
+/// tests that check reuse need all of them rather than one concatenated string.
+async fn exchange_returning<F, Fut, T>(limits: Limits, play_client: F) -> T
+where
+    F: FnOnce(tokio::io::DuplexStream) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    exchange_returning_with_cors(limits, CorsConfig::disabled(), play_client).await
+}
+
+/// The one that actually runs the server. The three above are its spellings.
+async fn exchange_returning_with_cors<F, Fut, T>(
+    limits: Limits,
+    cors: CorsConfig,
+    play_client: F,
+) -> T
+where
+    F: FnOnce(tokio::io::DuplexStream) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
     let (client, mut server) = tokio::io::duplex(READ_CHUNK_BYTES * 2);
 
     let client_side = tokio::spawn(play_client(client));
@@ -35,6 +77,12 @@ where
 }
 
 /// Writes `chunks` with a pause between each, then reads the whole response.
+///
+/// The write half is closed once the last chunk is out. On a persistent connection
+/// that is how a client says it has nothing further to send: without it the server
+/// would correctly wait for another request, and `read_to_end` would block until
+/// the idle timeout rather than returning as soon as the answer arrives. Tests that
+/// exercise reuse keep the write half open on purpose and are written by hand.
 async fn send_chunks(mut client: tokio::io::DuplexStream, chunks: Vec<Vec<u8>>) -> String {
     for chunk in chunks {
         client.write_all(&chunk).await.expect("write failed");
@@ -43,10 +91,56 @@ async fn send_chunks(mut client: tokio::io::DuplexStream, chunks: Vec<Vec<u8>>) 
         tokio::task::yield_now().await;
     }
 
+    let _ = client.shutdown().await;
+
     let mut response = Vec::new();
     let _ = client.read_to_end(&mut response).await;
 
     String::from_utf8_lossy(&response).to_string()
+}
+
+/// Reads exactly one response off `client`, leaving the connection open.
+///
+/// `read_to_end` cannot be used on a connection that is going to be reused: it
+/// waits for an EOF the server has no reason to send. Responses here are framed by
+/// `Content-Length`, or by the end of the header block when there is none — the
+/// same rules a real client uses to find where one response stops and the next
+/// begins.
+///
+/// `buffered` belongs to the client rather than to one response, for the same
+/// reason the server keeps one: answers to pipelined requests arrive together, and
+/// a reader that dropped whatever came after the response it was asked for would
+/// lose the next one. Reusing it across calls is what makes a second call work.
+async fn read_one_response(client: &mut tokio::io::DuplexStream, buffered: &mut Vec<u8>) -> String {
+    let mut chunk = [0u8; 1024];
+
+    loop {
+        let header_end = buffered
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|start| start + 4);
+
+        if let Some(header_end) = header_end {
+            let headers = String::from_utf8_lossy(&buffered[..header_end]).to_string();
+
+            let content_length = utils::request::header::get_header(&headers, "content-length")
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+
+            if buffered.len() >= header_end + content_length {
+                let response: Vec<u8> = buffered.drain(..header_end + content_length).collect();
+
+                return String::from_utf8_lossy(&response).to_string();
+            }
+        }
+
+        match client.read(&mut chunk).await {
+            // The connection ended before a whole response arrived. Returning what
+            // there is lets the assertion name it instead of hanging.
+            Ok(0) | Err(_) => return String::from_utf8_lossy(buffered).to_string(),
+            Ok(n) => buffered.extend_from_slice(&chunk[..n]),
+        }
+    }
 }
 
 // ── Assembly across reads ────────────────────────────────────────────────────
@@ -54,7 +148,7 @@ async fn send_chunks(mut client: tokio::io::DuplexStream, chunks: Vec<Vec<u8>>) 
 #[tokio::test]
 async fn request_split_mid_header_is_reassembled() {
     // The split falls inside a header name, the case a single `read()` got wrong.
-    let response = exchange(Limits::default(), |client| {
+    let response = exchange(limits(), |client| {
         send_chunks(
             client,
             vec![
@@ -75,7 +169,7 @@ async fn request_split_mid_header_is_reassembled() {
 
 #[tokio::test]
 async fn body_split_from_headers_is_awaited() {
-    let response = exchange(Limits::default(), |client| {
+    let response = exchange(limits(), |client| {
         send_chunks(
             client,
             vec![
@@ -100,7 +194,7 @@ async fn body_split_from_headers_is_awaited() {
 async fn request_over_the_ceiling_is_rejected_with_413() {
     let limits = Limits {
         max_request_bytes: 512,
-        ..Limits::default()
+        ..limits()
     };
 
     let response = exchange(limits, |client| {
@@ -123,7 +217,7 @@ async fn declared_content_length_over_the_ceiling_is_rejected_before_reading_it(
     // alone, otherwise the server would sit waiting for bytes that never arrive.
     let limits = Limits {
         max_request_bytes: 512,
-        ..Limits::default()
+        ..limits()
     };
 
     let response = exchange(limits, |client| {
@@ -144,7 +238,7 @@ async fn declared_content_length_over_the_ceiling_is_rejected_before_reading_it(
 
 #[tokio::test]
 async fn unparseable_header_block_is_rejected_with_400() {
-    let response = exchange(Limits::default(), |client| {
+    let response = exchange(limits(), |client| {
         send_chunks(client, vec![b"GET /x HTTP/9.9\r\n\r\n".to_vec()])
     })
     .await;
@@ -157,7 +251,7 @@ async fn unparseable_header_block_is_rejected_with_400() {
 
 #[tokio::test]
 async fn body_that_is_not_utf8_is_rejected_with_400() {
-    let response = exchange(Limits::default(), |client| {
+    let response = exchange(limits(), |client| {
         let mut request = b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 4\r\n\r\n".to_vec();
         // A lone continuation byte sequence: valid bytes, invalid UTF-8.
         request.extend([0xFF, 0xFE, 0xFD, 0xFC]);
@@ -178,7 +272,7 @@ async fn body_that_is_not_utf8_is_rejected_with_400() {
 async fn a_request_that_never_completes_is_answered_with_408() {
     let limits = Limits {
         request_timeout: std::time::Duration::from_millis(50),
-        ..Limits::default()
+        ..limits()
     };
 
     let response = exchange(limits, |mut client| async move {
@@ -208,7 +302,7 @@ async fn the_deadline_is_not_reset_by_trickled_bytes() {
     // faster than any per-read timeout would fire, must still be cut off.
     let limits = Limits {
         request_timeout: std::time::Duration::from_millis(100),
-        ..Limits::default()
+        ..limits()
     };
 
     let response = exchange(limits, |mut client| async move {
@@ -240,7 +334,7 @@ async fn the_deadline_is_not_reset_by_trickled_bytes() {
 
 #[tokio::test]
 async fn eof_before_a_complete_request_is_answered_with_silence() {
-    let response = exchange(Limits::default(), |mut client| async move {
+    let response = exchange(limits(), |mut client| async move {
         client
             .write_all(b"GET /x HTTP/1.1\r\n")
             .await
@@ -263,14 +357,217 @@ async fn eof_before_a_complete_request_is_answered_with_silence() {
 // ── Response framing ─────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn generated_errors_carry_connection_close() {
-    let response = exchange(Limits::default(), |client| {
+async fn a_generated_error_does_not_end_a_healthy_connection() {
+    // A 404 is an answer, not a fault. The request was framed correctly, so the
+    // connection is still synchronised and the client may keep using it.
+    let response = exchange(limits(), |client| {
         send_chunks(client, vec![b"GET /nothing-registered HTTP/1.1\r\n\r\n".to_vec()])
     })
     .await;
 
-    assert!(response.contains("Connection: close\r\n"), "{response}");
+    assert!(!response.contains("Connection: close"), "{response}");
     assert!(response.contains("Content-Type: text/plain\r\n"), "{response}");
+}
+
+#[tokio::test]
+async fn a_refused_request_ends_the_connection() {
+    // The opposite case. A body that overran the ceiling is still arriving, so the
+    // next bytes on the wire are not a request line and nothing after this can be
+    // framed. Saying `close` is the only honest answer.
+    let refusing = Limits {
+        max_request_bytes: 512,
+        ..limits()
+    };
+
+    let response = exchange(refusing, |client| {
+        send_chunks(
+            client,
+            vec![b"POST /x HTTP/1.1\r\nContent-Length: 100000\r\n\r\n".to_vec()],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 413 Payload Too Large\r\n"),
+        "{response}"
+    );
+    assert!(response.contains("Connection: close\r\n"), "{response}");
+}
+
+// ── Connection reuse ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn a_second_request_is_served_on_the_same_connection() {
+    // The point of the whole exercise: one TLS handshake, many requests. Before
+    // this, the server shut the stream down after answering and the second request
+    // was written into a closed socket.
+    register(Method::GET, "/keep-alive/first");
+    register(Method::GET, "/keep-alive/second");
+
+    let (first, second) = exchange_returning(limits(), |mut client| async move {
+        let mut buffered = Vec::new();
+
+        client
+            .write_all(b"GET /keep-alive/first HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .expect("write failed");
+
+        let first = read_one_response(&mut client, &mut buffered).await;
+
+        client
+            .write_all(b"GET /keep-alive/second HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .expect("the connection was closed after one request");
+
+        let second = read_one_response(&mut client, &mut buffered).await;
+
+        (first, second)
+    })
+    .await;
+
+    assert!(first.starts_with("HTTP/1.1 200 OK\r\n"), "{first}");
+    assert!(second.starts_with("HTTP/1.1 200 OK\r\n"), "{second}");
+    assert!(!first.contains("Connection: close"), "{first}");
+}
+
+#[tokio::test]
+async fn pipelined_requests_are_both_answered() {
+    // Both requests arrive in one read. The second one lives in the bytes past the
+    // first request's Content-Length — which the old reader discarded, losing a
+    // request the client believed it had sent.
+    register(Method::POST, "/keep-alive-pipeline/items");
+
+    let (first, second) = exchange_returning(limits(), |mut client| async move {
+        client
+            .write_all(
+                b"POST /keep-alive-pipeline/items HTTP/1.1\r\nContent-Length: 2\r\n\r\nhi\
+                  POST /keep-alive-pipeline/items HTTP/1.1\r\nContent-Length: 2\r\n\r\nho",
+            )
+            .await
+            .expect("write failed");
+
+        let mut buffered = Vec::new();
+
+        let first = read_one_response(&mut client, &mut buffered).await;
+        let second = read_one_response(&mut client, &mut buffered).await;
+
+        (first, second)
+    })
+    .await;
+
+    assert!(first.starts_with("HTTP/1.1 200 OK\r\n"), "{first}");
+    assert!(
+        second.starts_with("HTTP/1.1 200 OK\r\n"),
+        "the pipelined second request was dropped: {second}"
+    );
+}
+
+#[tokio::test]
+async fn a_client_asking_to_close_is_obeyed() {
+    register(Method::GET, "/keep-alive-close/items");
+
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"GET /keep-alive-close/items HTTP/1.1\r\nConnection: close\r\n\r\n".to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(response.contains("Connection: close\r\n"), "{response}");
+}
+
+#[tokio::test]
+async fn http_1_0_closes_unless_it_asks_otherwise() {
+    // The default inverted between versions, and both are still on the wire. An
+    // HTTP/1.0 client that is not told the connection ends will hang waiting for
+    // an EOF that marks the end of a body it already has.
+    register(Method::GET, "/keep-alive-http10/items");
+
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![b"GET /keep-alive-http10/items HTTP/1.0\r\n\r\n".to_vec()],
+        )
+    })
+    .await;
+
+    assert!(response.contains("Connection: close\r\n"), "{response}");
+}
+
+#[tokio::test]
+async fn http_1_0_keeps_alive_when_it_asks() {
+    register(Method::GET, "/keep-alive-http10-on/items");
+
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"GET /keep-alive-http10-on/items HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"
+                    .to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(!response.contains("Connection: close"), "{response}");
+}
+
+#[tokio::test]
+async fn the_request_budget_closes_the_connection() {
+    register(Method::GET, "/keep-alive-budget/items");
+
+    let budgeted = Limits {
+        max_requests_per_connection: 1,
+        ..limits()
+    };
+
+    let response = exchange(budgeted, |client| {
+        send_chunks(
+            client,
+            vec![b"GET /keep-alive-budget/items HTTP/1.1\r\n\r\n".to_vec()],
+        )
+    })
+    .await;
+
+    assert!(
+        response.contains("Connection: close\r\n"),
+        "the last response the budget allows must say so: {response}"
+    );
+}
+
+#[tokio::test]
+async fn an_idle_connection_is_closed_without_a_second_response() {
+    // The cost of persistence, bounded. A client that stops talking must not hold
+    // a connection slot forever, and a connection the server times out while it is
+    // between requests has no fault to report — closing quietly is the answer.
+    register(Method::GET, "/keep-alive-idle/items");
+
+    let (first, after) = exchange_returning(limits(), |mut client| async move {
+        client
+            .write_all(b"GET /keep-alive-idle/items HTTP/1.1\r\n\r\n")
+            .await
+            .expect("write failed");
+
+        let mut buffered = Vec::new();
+
+        let first = read_one_response(&mut client, &mut buffered).await;
+
+        // Never sends a second request. The server's idle timeout is what ends it.
+        let mut rest = Vec::new();
+        let _ = client.read_to_end(&mut rest).await;
+
+        (first, String::from_utf8_lossy(&rest).to_string())
+    })
+    .await;
+
+    assert!(first.starts_with("HTTP/1.1 200 OK\r\n"), "{first}");
+    assert!(
+        after.is_empty(),
+        "an idle timeout is not a request to answer: {after}"
+    );
 }
 
 // ── dispatch, without a transport ────────────────────────────────────────────
@@ -522,7 +819,7 @@ async fn cors_headers_reach_the_wire() {
     register(Method::GET, "/wire-cors/items");
 
     let response = exchange_with_cors(
-        Limits::default(),
+        limits(),
         CorsConfig::new(&[ORIGIN], false, None),
         |client| {
             send_chunks(
