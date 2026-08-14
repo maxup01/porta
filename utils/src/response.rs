@@ -202,7 +202,6 @@ where
 /// Content-Type: application/json\r\n
 /// Content-Length: <byte_length>\r\n
 /// Date: <rfc-date>\r\n
-/// Connection: close\r\n
 /// \r\n
 /// <json_body>
 /// ```
@@ -259,10 +258,14 @@ where
 /// `Content-Length` is `body.len()`, which is a byte count rather than a
 /// character count, as HTTP requires.
 ///
-/// `Connection: close` is sent on every response because the server handles
-/// exactly one request per connection. Without it an HTTP/1.1 client is entitled
-/// to assume the connection persists and will send its next request into a socket
-/// that has already been closed.
+/// No `Connection` header is emitted. HTTP/1.1 connections are persistent by
+/// default (RFC 9112 §9.3), so the absence of the header is itself the statement
+/// that the connection stays open — which is true, because the server serves
+/// more than one request per connection. `Connection: close` is added by the
+/// server on the response it intends to close after, and only there; that
+/// decision belongs to the connection loop, which knows whether the client asked
+/// to close and whether the per-connection request budget is spent. A response
+/// serialized here cannot know either.
 ///
 /// # 204 No Content
 ///
@@ -275,13 +278,13 @@ fn format_http_message(status: HttpStatus, content_type: &str, body: &str) -> St
 
     if status == HttpStatus::NoContent {
         return format!(
-            "HTTP/1.1 {} {}\r\nDate: {}\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {} {}\r\nDate: {}\r\n\r\n",
             status as u32, status, date
         );
     }
 
     format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nDate: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nDate: {}\r\n\r\n{}",
         status as u32,
         status,
         content_type,
