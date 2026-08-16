@@ -247,6 +247,95 @@ pub fn get_input_arg_idents_and_types(
     fn_args
 }
 
+/// Splits a handler's parameter list into the components it asks for and the
+/// parameters that come from the request.
+///
+/// A component is a parameter marked `#[component]`. It is taken out of the list
+/// rather than passed along, because everything downstream —
+/// [`get_input_arg_idents_and_types`], the deserialization block, the choice of
+/// which parameter binds the request body — assumes every parameter it is given was
+/// parsed out of the request. A component is not, and left in place it would be
+/// looked up in the parameter map, miss, and answer `400` on every request.
+///
+/// The type returned for a component is the referent rather than the reference:
+/// `&TicketHandler` comes back as `TicketHandler`. That is the type the instance is
+/// stored and implemented on, so it is the one the caller needs to name.
+///
+/// # Arguments
+/// * `inputs` - Punctuated list of [`FnArg`] from the handler's signature.
+///
+/// # Returns
+/// The component parameters as `(Ident, Type)` pairs, and the parameters that
+/// remain, in their original order.
+///
+/// # Errors
+/// A `#[component]` parameter that is not a shared reference, or that is not a plain
+/// name. Neither can be resolved to the `&'static` instance held in a static, and
+/// reporting it here puts the error on the parameter the caller wrote instead of on
+/// generated code they cannot see.
+///
+/// # Example
+/// ```ignore
+/// // Given: fn handler(id: u32, #[component] tickets: &TicketHandler) { ... }
+/// let (components, request_inputs) = split_component_args(&input_fn.sig.inputs)?;
+/// // components     == [("tickets", TicketHandler)]
+/// // request_inputs == id: u32
+/// ```
+pub fn split_component_args(
+    inputs: &Punctuated<FnArg, Comma>,
+) -> syn::Result<(Vec<(syn::Ident, syn::Type)>, Punctuated<FnArg, Comma>)> {
+    let mut component_args: Vec<(syn::Ident, syn::Type)> = vec![];
+    let mut request_inputs: Punctuated<FnArg, Comma> = Punctuated::new();
+
+    for arg in inputs {
+        let FnArg::Typed(pat_type) = arg else {
+            // A `self` receiver is not a component and not a request parameter.
+            // Passing it through leaves it to the existing extractor, which skips it.
+            request_inputs.push(arg.clone());
+            continue;
+        };
+
+        if !pat_type
+            .attrs
+            .iter()
+            .any(|attr| attr.path.is_ident("component"))
+        {
+            request_inputs.push(arg.clone());
+            continue;
+        }
+
+        let Pat::Ident(pat_ident) = &*pat_type.pat else {
+            return Err(syn::Error::new_spanned(
+                &pat_type.pat,
+                "a `#[component]` parameter must be a plain name, e.g. `tickets: &TicketHandler`",
+            ));
+        };
+
+        // The instance lives in a `static`, so it can only ever be lent out. A
+        // component taken by value would have to be moved out of that static, and a
+        // `&mut` would hand one request exclusive access to state every other request
+        // shares — synchronization belongs inside the component's own fields.
+        let syn::Type::Reference(reference) = &*pat_type.ty else {
+            return Err(syn::Error::new_spanned(
+                &pat_type.ty,
+                "a `#[component]` parameter must be a shared reference, e.g. `&TicketHandler`",
+            ));
+        };
+
+        if reference.mutability.is_some() {
+            return Err(syn::Error::new_spanned(
+                &pat_type.ty,
+                "a `#[component]` parameter cannot be `&mut`; put a `Mutex` or `RwLock` \
+                 on the field that needs mutating",
+            ));
+        }
+
+        component_args.push((pat_ident.ident.clone(), (*reference.elem).clone()));
+    }
+
+    Ok((component_args, request_inputs))
+}
+
 /// Generates the full [`TokenStream`] for a route handler function and its
 /// corresponding route registration constructor.
 ///
