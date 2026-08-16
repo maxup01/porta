@@ -247,6 +247,8 @@ pub fn get_input_arg_idents_and_types(
     fn_args
 }
 
+type ComponentsAndNonComponents = (Vec<(syn::Ident, syn::Type)>, Punctuated<FnArg, Comma>);
+
 /// Splits a handler's parameter list into the components it asks for and the
 /// parameters that come from the request.
 ///
@@ -283,7 +285,7 @@ pub fn get_input_arg_idents_and_types(
 /// ```
 pub fn split_component_args(
     inputs: &Punctuated<FnArg, Comma>,
-) -> syn::Result<(Vec<(syn::Ident, syn::Type)>, Punctuated<FnArg, Comma>)> {
+) -> syn::Result<ComponentsAndNonComponents> {
     let mut component_args: Vec<(syn::Ident, syn::Type)> = vec![];
     let mut request_inputs: Punctuated<FnArg, Comma> = Punctuated::new();
 
