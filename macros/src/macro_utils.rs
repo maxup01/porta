@@ -88,11 +88,30 @@ impl Parse for HttpServerArgs {
     }
 }
 
+/// The arguments to `#[component(..)]`, parsed.
+///
+/// Read directly from the token stream rather than through [`syn::AttributeArgs`]
+/// for the same reason [`HttpServerArgs`] is: every failure below carries the span
+/// of the token that caused it, so a mistake underlines the argument that caused
+/// it instead of the whole attribute.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ComponentArgs {
+    /// Name of the accessor generated on `AppContext`, so `name = "ticket_handler"`
+    /// produces `AppContext::ticket_handler()`.
+    ///
+    /// Required rather than derived from the annotated type, because turning
+    /// `TicketHandler` into `ticket_handler` has no answer a caller would predict
+    /// for `HTTPHandler` or `TicketDb`. Naming it explicitly also puts the accessor
+    /// next to the type it hands out, which is where a reader looks for it.
     pub name: String,
 }
 
+/// Accepts `name = "..."`, with a trailing comma allowed.
+///
+/// `name` is rejected when given twice rather than letting the last one win, for
+/// the reason described on [`parse_once`], and when it is empty or holds a space.
+/// It becomes an identifier in generated code, and an invalid one aborts the
+/// expansion from inside `format_ident!` with no span to report.
 impl Parse for ComponentArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut name: Option<String> = None;
