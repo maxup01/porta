@@ -304,6 +304,13 @@ pub fn http_server(
     let allow_origins = args.allow_origins;
 
     let expanded = quote! {
+
+
+        #[derive(Default)]
+        pub struct AppContext {}
+
+        static APP_CONTEXT: ::std::sync::LazyLock<AppContext> = ::std::sync::LazyLock::new(|| AppContext::default());
+
         // Every path below is absolute and routed through `embedded_web_server`, because
         // this code is expanded into the *caller's* crate. The caller depends only on
         // `embedded_web_server`, not on tokio/rustls/rcgen/ctor/serde_json directly, so
