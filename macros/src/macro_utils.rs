@@ -55,8 +55,11 @@ impl Parse for HttpServerArgs {
                     )?)
                 }
                 "allow_origins" => {
-                    allow_origins =
-                        Some(parse_once(&name, allow_origins, parse_string_array(input)?)?)
+                    allow_origins = Some(parse_once(
+                        &name,
+                        allow_origins,
+                        parse_string_array(input)?,
+                    )?)
                 }
                 unknown => {
                     return Err(syn::Error::new(
@@ -83,6 +86,12 @@ impl Parse for HttpServerArgs {
             allow_origins: allow_origins.unwrap_or_default(),
         })
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ComponentArgs {
+    pub name: String,
+    pub sync: bool,
 }
 
 /// Returns `value`, or an error if this argument was already given.
