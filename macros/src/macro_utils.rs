@@ -366,9 +366,13 @@ pub fn generate_route_handler_tokens(
     let fn_block = &input_fn.block;
     let fn_vis = &input_fn.vis;
 
-    let fn_args = get_input_arg_idents_and_types(&input_fn.sig.inputs);
+    let (component_args, request_args) = split_component_args(&input_fn.sig.inputs).unwrap();
+
+    let fn_args = get_input_arg_idents_and_types(&request_args);
 
     let deserialized_args = generate_deserialization_block(&fn_args);
+
+    let component_retrieval_block = generate_components_retrieval_block(&component_args);
 
     let path_params: Vec<String> =
         utils::request::path_param::extract_path_param_names_from_path(path).collect();
@@ -417,6 +421,8 @@ pub fn generate_route_handler_tokens(
 
     let fn_expanded = quote! {
         #fn_vis fn #fn_name(request: &str) -> String {
+            #component_retrieval_block
+
             let path_from_request = match ::embedded_web_server::utils::request::route::extract_path_from_request(request) {
                 Ok(path_from_request) => path_from_request,
                 Err(_) => {
@@ -588,6 +594,52 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
     }
 
     deserialized
+}
+
+/// Generates the `let` bindings that hand a handler the components it asked for.
+///
+/// Each binding reads the instance from `AppContext` through the accessor named by
+/// the parameter itself, so `#[component] tickets: &TicketHandler` becomes
+/// `let tickets: &'static TicketHandler = crate::AppContext::tickets();`.
+///
+/// Taking the accessor name from the parameter is what makes this resolvable at
+/// all. The accessor is emitted by `#[component]` on the struct, from that
+/// attribute's `name` argument, in a macro invocation this one cannot see — and a
+/// proc macro has no type information, so the type in the signature is a bare token
+/// that cannot be turned back into the name. The parameter name is the one place
+/// the caller can state the connection. Annotating the binding with the declared
+/// type then makes the compiler check that the accessor really does hand back what
+/// the handler claimed, so a mismatched pair fails to compile rather than at
+/// runtime.
+///
+/// These bindings do no parsing and have no failure path, which is why they are
+/// kept apart from [`generate_deserialization_block`]: a component cannot be absent
+/// or malformed the way a request parameter can.
+///
+/// # Arguments
+/// * `component_args` - Slice of `(Ident, Type)` pairs, as returned by
+///   [`split_component_args`]. The type is the referent, not the reference.
+///
+/// # Returns
+/// A [`TokenStream`] holding one `let` binding per component, in the order the
+/// parameters were declared. Empty when the handler asks for none.
+///
+/// # Example
+/// ```ignore
+/// // Given: fn handler(#[component] tickets: &TicketHandler) { ... }
+/// let block = generate_component_retrieval_block(&component_args);
+/// // block == let tickets: &'static TicketHandler = crate::AppContext::tickets();
+/// ```
+fn generate_components_retrieval_block(component_args: &[(syn::Ident, syn::Type)]) -> TokenStream {
+    let bindings = component_args.iter().map(|(arg_name, arg_type)| {
+        quote! {
+            let #arg_name: &'static #arg_type = crate::AppContext::#arg_name();
+        }
+    });
+
+    quote! {
+        #( #bindings )*
+    }
 }
 
 #[cfg(test)]
