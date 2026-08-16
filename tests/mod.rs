@@ -1,4 +1,4 @@
-use macros::{delete, get, patch, post, put};
+use macros::{component, delete, get, patch, post, put};
 use serde::{Deserialize, Serialize};
 use utils::response::{HttpResponse, HttpStatus};
 
@@ -340,4 +340,154 @@ fn content_length_matches_the_body_it_describes() {
             "Content-Length disagrees with the body: {response}"
         );
     }
+}
+
+// ── Components ───────────────────────────────────────────────────────────────
+//
+// `#[component]` hangs its accessors off `AppContext`, which `#[http_server]`
+// generates into the caller's crate root. An integration test cannot run that
+// attribute — it takes over `main` and binds a TLS listener — so the declaration it
+// would emit is written out here instead. Everything below then exercises the real
+// expansion: two components, an accessor apiece, and handlers that receive them.
+
+#[derive(Default)]
+pub struct AppContext {}
+
+/// Mutable shared state. The lock is on the field rather than around the whole
+/// component, which is what lets the accessor hand out a plain `&'static`.
+#[component(name = "counter")]
+#[derive(Default)]
+struct Counter {
+    hits: std::sync::Mutex<u32>,
+}
+
+impl Counter {
+    fn record(&self) -> u32 {
+        let mut hits = self.hits.lock().expect("counter lock poisoned");
+        *hits += 1;
+        *hits
+    }
+}
+
+/// Immutable shared state, and a hand-written `Default` — the accessor builds the
+/// instance through `Default::default`, so this is what a component that needs real
+/// construction looks like today.
+#[component(name = "greeter")]
+struct Greeter {
+    prefix: String,
+}
+
+impl Default for Greeter {
+    fn default() -> Self {
+        Greeter {
+            prefix: "hello".to_string(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Hits {
+    total: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Greeting {
+    message: String,
+}
+
+#[get(path = "/hits")]
+fn record_hit(#[component] counter: &Counter) -> HttpResponse<Hits> {
+    HttpResponse::new(
+        Hits {
+            total: counter.record(),
+        },
+        HttpStatus::Ok,
+    )
+}
+
+#[get(path = "/greet/{name}")]
+fn greet(name: String, #[component] greeter: &Greeter) -> HttpResponse<Greeting> {
+    HttpResponse::new(
+        Greeting {
+            message: format!("{} {}", greeter.prefix, name),
+        },
+        HttpStatus::Ok,
+    )
+}
+
+// The component is declared *ahead* of the body parameter on purpose. The body binds
+// to the first parameter that is not a path param, so a component left in that list
+// would take the body's place and the real parameter would answer 400.
+#[post(path = "/greetings")]
+fn create_greeting(#[component] greeter: &Greeter, name: String) -> HttpResponse<Greeting> {
+    HttpResponse::new(
+        Greeting {
+            message: format!("{} {}", greeter.prefix, name),
+        },
+        HttpStatus::Ok,
+    )
+}
+
+#[test]
+fn a_handler_receives_the_component_it_asks_for() {
+    let response = record_hit("GET /hits");
+
+    assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
+
+    let hits: Hits = serde_json::from_str(body_of(&response)).expect("body should be Hits");
+
+    assert!(hits.total >= 1);
+}
+
+#[test]
+fn a_component_keeps_its_state_between_requests() {
+    // The whole point of a component: the second request sees what the first did.
+    // Asserted as strictly-greater rather than exactly-one-more because the other
+    // tests in this file share the counter and run on their own threads.
+    let first: Hits = serde_json::from_str(body_of(&record_hit("GET /hits"))).expect("first");
+    let second: Hits = serde_json::from_str(body_of(&record_hit("GET /hits"))).expect("second");
+
+    assert!(
+        second.total > first.total,
+        "the counter restarted: {} then {}",
+        first.total,
+        second.total
+    );
+}
+
+#[test]
+fn the_context_hands_back_one_shared_instance() {
+    // A fresh value per call would satisfy every assertion above and still be wrong.
+    assert!(std::ptr::eq(AppContext::counter(), AppContext::counter()));
+}
+
+#[test]
+fn a_component_sits_alongside_a_path_parameter() {
+    let response = greet("GET /greet/world");
+
+    assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
+
+    let greeting: Greeting = serde_json::from_str(body_of(&response)).expect("body");
+
+    assert_eq!(greeting.message, "hello world");
+}
+
+#[test]
+fn a_component_declared_before_the_body_does_not_take_it() {
+    let response =
+        create_greeting("POST /greetings HTTP/1.1\r\nContent-Type: application/json\r\n\r\nworld");
+
+    assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
+
+    let greeting: Greeting = serde_json::from_str(body_of(&response)).expect("body");
+
+    assert_eq!(greeting.message, "hello world");
+}
+
+#[test]
+fn each_component_gets_its_own_accessor() {
+    // Two `#[component]` invocations contribute two inherent impl blocks to the same
+    // `AppContext`, which is only legal because both land in this crate.
+    assert_eq!(AppContext::greeter().prefix, "hello");
+    assert!(AppContext::counter().record() >= 1);
 }
