@@ -1,5 +1,5 @@
 use super::*;
-use syn::{parse_quote, FnArg, ItemFn};
+use syn::{FnArg, ItemFn, parse_quote};
 use utils::request::route::Method;
 
 fn parse_fn_args(input: ItemFn) -> syn::punctuated::Punctuated<FnArg, syn::token::Comma> {
@@ -264,8 +264,8 @@ fn parses_an_origin_list() {
 
 #[test]
 fn parses_a_single_origin_and_a_wildcard() {
-    let args = parse_args(r#"ip = "0.0.0.0", port = 80, allow_origins = ["*"]"#)
-        .expect("should parse");
+    let args =
+        parse_args(r#"ip = "0.0.0.0", port = 80, allow_origins = ["*"]"#).expect("should parse");
 
     assert_eq!(args.allow_origins, vec!["*"]);
 }
@@ -330,5 +330,243 @@ fn a_port_outside_u16_is_an_error() {
 #[test]
 fn an_origin_list_of_non_strings_is_an_error() {
     assert!(parse_args(r#"ip = "127.0.0.1", port = 8443, allow_origins = [42]"#).is_err());
-    assert!(parse_args(r#"ip = "127.0.0.1", port = 8443, allow_origins = "http://a.test""#).is_err());
+    assert!(
+        parse_args(r#"ip = "127.0.0.1", port = 8443, allow_origins = "http://a.test""#).is_err()
+    );
+}
+
+// ── ComponentArgs ────────────────────────────────────────────────────────────
+
+fn parse_component_args(args: &str) -> syn::Result<ComponentArgs> {
+    syn::parse_str::<ComponentArgs>(args)
+}
+
+#[test]
+fn parses_the_accessor_name() {
+    let args = parse_component_args(r#"name = "ticket_handler""#).expect("should parse");
+
+    assert_eq!(args.name, "ticket_handler");
+}
+
+#[test]
+fn a_trailing_comma_is_accepted_after_the_name() {
+    assert!(parse_component_args(r#"name = "tickets","#).is_ok());
+}
+
+#[test]
+fn a_missing_name_is_an_error() {
+    // The name is what the accessor is called, and there is nothing to fall back
+    // on: the type cannot be converted back into it.
+    assert!(parse_component_args("").is_err());
+}
+
+#[test]
+fn an_unknown_component_argument_is_an_error() {
+    let error = parse_component_args(r#"name = "tickets", sync"#)
+        .expect_err("unknown argument should be rejected");
+
+    assert!(
+        error.to_string().contains("sync"),
+        "the error should name the argument: {error}"
+    );
+}
+
+#[test]
+fn a_repeated_name_is_an_error() {
+    let error = parse_component_args(r#"name = "a", name = "b""#)
+        .expect_err("a repeated argument should be rejected");
+
+    assert!(error.to_string().contains("more than once"), "{error}");
+}
+
+#[test]
+fn a_name_that_cannot_be_an_identifier_is_an_error() {
+    // It becomes an accessor ident in generated code, so an unusable one has to be
+    // caught here while there is still a span to report it against.
+    assert!(parse_component_args(r#"name = "ticket handler""#).is_err());
+    assert!(parse_component_args(r#"name = """#).is_err());
+    assert!(parse_component_args(r#"name = "   ""#).is_err());
+}
+
+// ── split_component_args ─────────────────────────────────────────────────────
+
+fn split(f: ItemFn) -> syn::Result<(Vec<(syn::Ident, syn::Type)>, Punctuated<FnArg, Comma>)> {
+    split_component_args(&f.sig.inputs)
+}
+
+fn type_of(component: &(syn::Ident, syn::Type)) -> String {
+    let ty = &component.1;
+    quote!(#ty).to_string()
+}
+
+#[test]
+fn a_handler_without_components_keeps_every_parameter() {
+    let f: ItemFn = parse_quote! { fn foo(id: u32, name: String) {} };
+    let (components, request_inputs) = split(f).expect("should split");
+
+    assert!(components.is_empty());
+    assert_eq!(request_inputs.len(), 2);
+}
+
+#[test]
+fn a_component_is_taken_out_of_the_request_parameters() {
+    // The point of the split: left in place, `tickets` would be looked up in the
+    // parameter map, miss, and answer 400 on every request.
+    let f: ItemFn = parse_quote! {
+        fn foo(id: u32, #[component] tickets: &TicketHandler) {}
+    };
+    let (components, request_inputs) = split(f).expect("should split");
+
+    assert_eq!(components.len(), 1);
+    assert_eq!(components[0].0.to_string(), "tickets");
+    assert_eq!(request_inputs.len(), 1);
+}
+
+#[test]
+fn a_component_is_reported_as_its_referent_not_its_reference() {
+    // `<TicketHandler as ..>` is what the accessor is implemented on, so returning
+    // `&TicketHandler` here would make every caller undo the reference.
+    let f: ItemFn = parse_quote! { fn foo(#[component] tickets: &TicketHandler) {} };
+    let (components, _) = split(f).expect("should split");
+
+    assert_eq!(type_of(&components[0]), "TicketHandler");
+}
+
+#[test]
+fn components_are_returned_in_declaration_order() {
+    let f: ItemFn = parse_quote! {
+        fn foo(#[component] tickets: &TicketHandler, id: u32, #[component] users: &UserStore) {}
+    };
+    let (components, request_inputs) = split(f).expect("should split");
+
+    assert_eq!(components.len(), 2);
+    assert_eq!(components[0].0.to_string(), "tickets");
+    assert_eq!(components[1].0.to_string(), "users");
+    assert_eq!(request_inputs.len(), 1);
+}
+
+#[test]
+fn an_unmarked_reference_parameter_is_left_alone() {
+    // Only the attribute decides. A reference that was not marked stays a request
+    // parameter, wrong though it will turn out to be, because guessing here would
+    // silently reinterpret a signature the caller wrote deliberately.
+    let f: ItemFn = parse_quote! { fn foo(tickets: &TicketHandler) {} };
+    let (components, request_inputs) = split(f).expect("should split");
+
+    assert!(components.is_empty());
+    assert_eq!(request_inputs.len(), 1);
+}
+
+#[test]
+fn a_component_taken_by_value_is_an_error() {
+    // The instance lives in a static and cannot be moved out of it.
+    let f: ItemFn = parse_quote! { fn foo(#[component] tickets: TicketHandler) {} };
+    // The `Ok` half is mapped away because syn's types carry no `Debug` unless the
+    // `extra-traits` feature is on, and `expect_err` needs one to print.
+    let error = split(f)
+        .map(|_| ())
+        .expect_err("a by-value component should be rejected");
+
+    assert!(error.to_string().contains("shared reference"), "{error}");
+}
+
+#[test]
+fn a_component_taken_by_mutable_reference_is_an_error() {
+    // One request cannot hold exclusive access to state every other request shares.
+    let f: ItemFn = parse_quote! { fn foo(#[component] tickets: &mut TicketHandler) {} };
+    let error = split(f)
+        .map(|_| ())
+        .expect_err("a `&mut` component should be rejected");
+
+    assert!(error.to_string().contains("&mut"), "{error}");
+}
+
+#[test]
+fn a_component_bound_by_a_pattern_is_an_error() {
+    // The parameter name is the accessor name, so there has to be exactly one.
+    let f: ItemFn = parse_quote! { fn foo(#[component] (a, b): &(u8, u8)) {} };
+    let error = split(f)
+        .map(|_| ())
+        .expect_err("a pattern-bound component should be rejected");
+
+    assert!(error.to_string().contains("plain name"), "{error}");
+}
+
+// ── generate_components_retrieval_block ──────────────────────────────────────
+
+fn retrieval_src(f: ItemFn) -> String {
+    let (components, _) = split_component_args(&f.sig.inputs).expect("should split");
+
+    // Whitespace between tokens is not meaningful and varies with how the stream
+    // was built, so it is removed rather than matched around.
+    generate_components_retrieval_block(&components)
+        .to_string()
+        .replace(' ', "")
+}
+
+#[test]
+fn a_handler_without_components_generates_nothing() {
+    let f: ItemFn = parse_quote! { fn foo(id: u32) {} };
+
+    assert!(retrieval_src(f).is_empty());
+}
+
+#[test]
+fn a_component_is_bound_from_the_app_context() {
+    let f: ItemFn = parse_quote! { fn foo(#[component] tickets: &TicketHandler) {} };
+    let src = retrieval_src(f);
+
+    assert!(src.contains("crate::AppContext::tickets()"), "{src}");
+}
+
+#[test]
+fn a_component_binding_is_annotated_with_the_declared_type() {
+    // The annotation is what makes the compiler check that the accessor hands back
+    // what the handler asked for, instead of the pair silently disagreeing.
+    let f: ItemFn = parse_quote! { fn foo(#[component] tickets: &TicketHandler) {} };
+    let src = retrieval_src(f);
+
+    assert!(src.contains("lettickets:&'staticTicketHandler"), "{src}");
+}
+
+#[test]
+fn every_component_gets_its_own_binding() {
+    let f: ItemFn = parse_quote! {
+        fn foo(#[component] tickets: &TicketHandler, #[component] users: &UserStore) {}
+    };
+    let src = retrieval_src(f);
+
+    assert!(src.contains("crate::AppContext::tickets()"), "{src}");
+    assert!(src.contains("crate::AppContext::users()"), "{src}");
+}
+
+// ── components in a generated handler ────────────────────────────────────────
+
+#[test]
+fn a_component_is_not_looked_up_in_the_parameter_map() {
+    let f: ItemFn = parse_quote! {
+        fn get_ticket(id: u32, #[component] tickets: &TicketHandler) -> String { String::new() }
+    };
+    let src = handler_src(f, "/tickets/{id}", Method::GET).replace(' ', "");
+
+    assert!(src.contains("crate::AppContext::tickets()"), "{src}");
+    assert!(
+        !src.contains(r#"map_with_params.get(&"tickets"[..])"#),
+        "the component was treated as a request parameter"
+    );
+}
+
+#[test]
+fn a_component_does_not_become_the_request_body() {
+    // The body binds to the first parameter that is not a path param. A component
+    // declared ahead of the real body parameter used to take its place.
+    let f: ItemFn = parse_quote! {
+        fn create_ticket(#[component] tickets: &TicketHandler, body: String) -> String { body }
+    };
+    let src = handler_src(f, "/tickets", Method::POST).replace(' ', "");
+
+    assert!(
+        src.contains(r#"map_with_params.insert("body".to_string(),body)"#),
+        "{src}"
+    );
 }
