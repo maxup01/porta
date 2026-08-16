@@ -91,13 +91,11 @@ impl Parse for HttpServerArgs {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ComponentArgs {
     pub name: String,
-    pub sync: bool,
 }
 
 impl Parse for ComponentArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut name: Option<String> = None;
-        let mut sync = false;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -106,16 +104,6 @@ impl Parse for ComponentArgs {
                 "name" => {
                     input.parse::<Token![=]>()?;
                     name = Some(parse_once(&key, name, input.parse::<LitStr>()?.value())?);
-                }
-                "sync" => {
-                    if sync {
-                        return Err(syn::Error::new(
-                            key.span(),
-                            "`sync` is given more than once",
-                        ));
-                    }
-
-                    sync = true;
                 }
                 unknown => {
                     return Err(syn::Error::new(
@@ -150,7 +138,7 @@ impl Parse for ComponentArgs {
             return Err(syn::Error::new(input.span(), "`name` argument is empty"));
         }
 
-        Ok(ComponentArgs { name, sync })
+        Ok(ComponentArgs { name })
     }
 }
 
