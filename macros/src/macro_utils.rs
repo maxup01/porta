@@ -94,6 +94,66 @@ pub struct ComponentArgs {
     pub sync: bool,
 }
 
+impl Parse for ComponentArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut name: Option<String> = None;
+        let mut sync = false;
+
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+
+            match key.to_string().as_str() {
+                "name" => {
+                    input.parse::<Token![=]>()?;
+                    name = Some(parse_once(&key, name, input.parse::<LitStr>()?.value())?);
+                }
+                "sync" => {
+                    if sync {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "`sync` is given more than once",
+                        ));
+                    }
+
+                    sync = true;
+                }
+                unknown => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        format!("unknown argument `{unknown}`; expected `name` or `sync`"),
+                    ));
+                }
+            }
+
+            if input.is_empty() {
+                break;
+            }
+
+            input.parse::<Token![,]>()?;
+        }
+
+        if name.is_none() {
+            return Err(syn::Error::new(
+                input.span(),
+                "`name` argument not specified",
+            ));
+        }
+
+        let name = name.unwrap();
+
+        if name.contains(' ') {
+            return Err(syn::Error::new(
+                input.span(),
+                "`name` argument is invalid, it shouldn't contain space",
+            ));
+        } else if name.trim().is_empty() {
+            return Err(syn::Error::new(input.span(), "`name` argument is empty"));
+        }
+
+        Ok(ComponentArgs { name, sync })
+    }
+}
+
 /// Returns `value`, or an error if this argument was already given.
 ///
 /// Silently letting the last one win would make `ip = "0.0.0.0", ip = "127.0.0.1"`
