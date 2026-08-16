@@ -150,7 +150,7 @@ where
     /// # Parameters
     ///
     /// - `body`   — Any value that implements `Serialize + Deserialize`. It will
-    ///              be JSON-serialized when the response is passed to [`format_response`].
+    ///   be JSON-serialized when the response is passed to [`format_response`].
     /// - `status` — The [`HttpStatus`] to associate with this response.
     ///
     /// # Examples
