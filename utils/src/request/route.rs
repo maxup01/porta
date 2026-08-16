@@ -280,7 +280,7 @@ pub fn register_route(method: Method, path: &str, function: RouteHandler) {
 /// ```
 pub fn extract_path_from_request(request: &str) -> Result<String, Error> {
     let path = request
-        .splitn(3, ' ')
+        .split(' ')
         .nth(1)
         .ok_or(Error::InvalidData("Invalid request lines"))?;
 
