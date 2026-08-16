@@ -3,8 +3,8 @@ extern crate proc_macro;
 mod macro_utils;
 
 use macro_utils::*;
-use quote::quote;
-use syn::{AttributeArgs, ItemFn, parse_macro_input};
+use quote::{format_ident, quote};
+use syn::{AttributeArgs, ItemFn, ItemStruct, parse_macro_input};
 use utils::request::route::Method;
 
 /// Registers the annotated function as a handler for HTTP `GET` requests at the given path.
@@ -457,4 +457,36 @@ pub fn http_server(
     };
 
     expanded.into()
+}
+
+#[proc_macro_attribute]
+pub fn component(
+    attr: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    let args = parse_macro_input!(attr as ComponentArgs);
+    let input_struct = parse_macro_input!(item as ItemStruct);
+
+    let component_type = &input_struct.ident;
+    let accessor = format_ident!("{}", args.name);
+
+    quote! {
+        #input_struct
+
+        impl crate::AppContext {
+            pub fn #accessor() -> &'static #component_type {
+                static INSTANCE: ::std::sync::LazyLock<#component_type> = ::std::sync::LazyLock::new(
+                    <#component_type as ::core::default::Default>::default
+                );
+
+                &*INSTANCE
+            }
+        }
+
+        const _: () = {
+            fn assert_sync<T: ::core::marker::Sync>() {}
+            let _ = assert_sync::<#component_type>;
+        };
+    }
+    .into()
 }
