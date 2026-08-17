@@ -270,6 +270,37 @@ pub fn get_route_path_attribute_value(args: &[NestedMeta]) -> Option<String> {
     None
 }
 
+/// The same lookup as [`get_route_path_attribute_value`], with the missing case turned
+/// into an error the caller can be shown.
+///
+/// The five route attributes cannot do anything useful without a path, so each of them
+/// has to end somewhere when one is not given. Ending with `expect` makes the failure a
+/// proc-macro panic, which rustc reports as `proc macro panicked` against the whole
+/// attribute with no file and no line — the caller is told something is wrong but not
+/// which of their handlers is wrong. Returning an error instead lets the call site emit
+/// `compile_error!`, which rustc places like any other diagnostic.
+///
+/// The span is [`Span::call_site`] rather than a token's, because the mistake is the
+/// absence of a token: with `#[get]` there is nothing in the argument list to underline.
+/// For an attribute macro that resolves to the attribute itself, which is where the
+/// missing argument belongs.
+///
+/// `http_method` is here only to name the attribute in the message, so `#[post]` is
+/// told about `#[post]` rather than about routes in general.
+pub fn require_route_path(args: &[NestedMeta], http_method: Method) -> syn::Result<String> {
+    get_route_path_attribute_value(args).ok_or_else(|| {
+        let attribute = http_method.as_str().to_lowercase();
+
+        syn::Error::new(
+            Span::call_site(),
+            format!(
+                "`#[{attribute}]` requires a `path` argument, \
+                 e.g. `#[{attribute}(path = \"/users/{{id}}\")]`"
+            ),
+        )
+    })
+}
+
 /// Extracts the name and type of each typed argument from a function's parameter list,
 /// skipping `self` receivers.
 ///
