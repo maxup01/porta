@@ -1,6 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::vec::Vec;
+use regex::Regex;
+use std::{sync::LazyLock, vec::Vec};
 use syn::{
     FnArg, Ident, ItemFn, Lit, LitInt, LitStr, Meta, NestedMeta, Pat, PatType, Token, bracketed,
     parse::{Parse, ParseStream},
@@ -106,15 +107,59 @@ pub struct ComponentArgs {
     pub name: String,
 }
 
+/// Matches a name that can be turned into an identifier at all.
+///
+/// Anything outside this shape makes `format_ident!` panic where the accessor is
+/// built, and a panicking proc macro reports `proc macro panicked` with no file and
+/// no span — the caller is told their attribute is wrong but not which one or where.
+/// Catching the same names here turns that into an error under the literal.
+///
+/// The character classes are Rust's own identifier rules rather than plain ASCII, so
+/// a name like `café` is accepted for the same reason `fn café()` compiles. The
+/// leading `_` is spelled out because it is not `XID_Start`.
+static ACCESSOR_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\p{XID_Start}_]\p{XID_Continue}*$").unwrap());
+
+/// Matches a name that is a legal identifier but cannot be a method name.
+///
+/// These do not panic — `format_ident!` builds `self` and `fn` quite happily — so the
+/// failure surfaces one step later as `pub fn self()` inside generated code, which the
+/// caller never wrote and cannot open. The message points at the expansion rather than
+/// at the attribute that caused it, so they are worth rejecting up front too.
+///
+/// `_` is here rather than in [`ACCESSOR_NAME`] because it is a valid identifier that
+/// is not a valid *name*: `pub fn _()` does not compile.
+static RESERVED_NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"^(?:_",
+        // Keywords in use.
+        r"|as|async|await|break|const|continue|crate|dyn|else|enum|extern|false|fn|for",
+        r"|if|impl|in|let|loop|match|mod|move|mut|pub|ref|return|self|Self|static|struct",
+        r"|super|trait|true|type|unsafe|use|where|while",
+        // Reserved for future use. Not keywords today, but rejecting them now costs
+        // nothing and keeps a name from breaking on an edition bump.
+        r"|abstract|become|box|do|final|gen|macro|override|priv|try|typeof|unsized",
+        r"|virtual|yield",
+        r")$",
+    ))
+    .unwrap()
+});
+
 /// Accepts `name = "..."`, with a trailing comma allowed.
 ///
 /// `name` is rejected when given twice rather than letting the last one win, for
-/// the reason described on [`parse_once`], and when it is empty or holds a space.
-/// It becomes an identifier in generated code, and an invalid one aborts the
-/// expansion from inside `format_ident!` with no span to report.
+/// the reason described on [`parse_once`], and when it could not name a method on
+/// `AppContext` — see [`ACCESSOR_NAME`] and [`RESERVED_NAME`] for the two ways that
+/// happens and why each is caught here instead of downstream.
+///
+/// The literal is carried through validation rather than being turned into a
+/// [`String`] as soon as it is read, so every error below can be hung on the literal
+/// itself. By the time these checks run the stream is consumed, and an error built
+/// from `input.span()` would underline the end of the attribute rather than the name
+/// that is wrong.
 impl Parse for ComponentArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut name: Option<String> = None;
+        let mut name: Option<LitStr> = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -122,12 +167,12 @@ impl Parse for ComponentArgs {
             match key.to_string().as_str() {
                 "name" => {
                     input.parse::<Token![=]>()?;
-                    name = Some(parse_once(&key, name, input.parse::<LitStr>()?.value())?);
+                    name = Some(parse_once(&key, name, input.parse::<LitStr>()?)?);
                 }
                 unknown => {
                     return Err(syn::Error::new(
                         key.span(),
-                        format!("unknown argument `{unknown}`; expected `name` or `sync`"),
+                        format!("unknown argument `{unknown}`; expected `name`"),
                     ));
                 }
             }
@@ -139,25 +184,34 @@ impl Parse for ComponentArgs {
             input.parse::<Token![,]>()?;
         }
 
-        if name.is_none() {
+        let Some(name) = name else {
             return Err(syn::Error::new(
                 input.span(),
-                "`name` argument not specified",
+                "`name` is required, e.g. name = \"ticket_handler\"",
+            ));
+        };
+
+        let value = name.value();
+
+        if !ACCESSOR_NAME.is_match(&value) {
+            return Err(syn::Error::new_spanned(
+                &name,
+                format!(
+                    "`{value}` is not a valid identifier, so it cannot name a method on \
+                     `AppContext`; use letters, digits and underscores, starting with a \
+                     letter or an underscore"
+                ),
             ));
         }
 
-        let name = name.unwrap();
-
-        if name.contains(' ') {
-            return Err(syn::Error::new(
-                input.span(),
-                "`name` argument is invalid, it shouldn't contain space",
+        if RESERVED_NAME.is_match(&value) {
+            return Err(syn::Error::new_spanned(
+                &name,
+                format!("`{value}` is reserved, so `AppContext::{value}()` would not compile"),
             ));
-        } else if name.trim().is_empty() {
-            return Err(syn::Error::new(input.span(), "`name` argument is empty"));
         }
 
-        Ok(ComponentArgs { name })
+        Ok(ComponentArgs { name: value })
     }
 }
 
