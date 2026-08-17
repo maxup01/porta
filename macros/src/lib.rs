@@ -482,6 +482,16 @@ pub fn component(
     let args = parse_macro_input!(attr as ComponentArgs);
     let input_struct = parse_macro_input!(item as ItemStruct);
 
+    if let Err(error) = reject_generic_component(&input_struct) {
+        let error = error.to_compile_error();
+
+        return quote! {
+            #error
+            #input_struct
+        }
+        .into();
+    }
+
     let component_type = &input_struct.ident;
     let accessor = format_ident!("{}", args.name);
 

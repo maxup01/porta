@@ -3,7 +3,8 @@ use quote::{format_ident, quote};
 use regex::Regex;
 use std::{sync::LazyLock, vec::Vec};
 use syn::{
-    FnArg, Ident, ItemFn, Lit, LitInt, LitStr, Meta, NestedMeta, Pat, PatType, Token, bracketed,
+    FnArg, Ident, ItemFn, ItemStruct, Lit, LitInt, LitStr, Meta, NestedMeta, Pat, PatType, Token,
+    bracketed,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     token::Comma,
@@ -330,6 +331,47 @@ pub fn get_input_arg_idents_and_types(
     }
 
     fn_args
+}
+
+/// Rejects a `#[component]` on a type that is not one type.
+///
+/// The accessor hands out a `&'static T`, and the instance behind it is a `static`, so
+/// `T` has to be a single concrete type known here. A generic struct is not one type but
+/// a family of them, and nothing in the attribute says which member of that family the
+/// singleton should be — `Repo<Ticket>` and `Repo<User>` are equally plausible readings
+/// of `#[component] struct Repo<T>`, and a proc macro cannot see far enough to tell.
+/// Lifetimes are worse than ambiguous: a `Repo<'a>` could never be the `'static` value
+/// the accessor promises.
+///
+/// Left unguarded this still fails, just later and worse. Only the struct's [`Ident`] is
+/// used when the accessor is built, so the parameters are silently dropped and the
+/// expansion mentions a bare `Repo`, producing two `missing generics for struct Repo`
+/// errors against generated code the caller never wrote. Reporting it here puts the
+/// message under their own `<T>` and explains why the answer is no.
+///
+/// The `where` clause is checked separately because [`syn::Generics`] renders only the
+/// angle-bracketed half, so a `struct Repo where Self: Sized` has an empty
+/// [`ToTokens`](quote::ToTokens) output and would be spanned to the call site instead.
+pub fn reject_generic_component(input_struct: &ItemStruct) -> syn::Result<()> {
+    let generics = &input_struct.generics;
+
+    if generics.params.is_empty() && generics.where_clause.is_none() {
+        return Ok(());
+    }
+
+    let name = &input_struct.ident;
+    let message = format!(
+        "`#[component]` cannot be applied to a generic type; a component is one `'static` \
+         instance, and `{name}` names a family of types rather than one of them. Declare a \
+         component per concrete type instead, e.g. `struct Ticket{name}({name}<Ticket>);`"
+    );
+
+    match &generics.where_clause {
+        Some(where_clause) if generics.params.is_empty() => {
+            Err(syn::Error::new_spanned(where_clause, message))
+        }
+        _ => Err(syn::Error::new_spanned(generics, message)),
+    }
 }
 
 type ComponentsAndNonComponents = (Vec<(syn::Ident, syn::Type)>, Punctuated<FnArg, Comma>);
