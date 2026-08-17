@@ -13,12 +13,12 @@ use utils::request::route::Method;
 ///
 /// - `path` — the route path to match, as a string literal (e.g. `"/hello"` or `"/users/:id"`)
 ///
-/// The `path` argument is required. Omitting it causes a compile-time panic.
+/// The `path` argument is required. Omitting it is a compile error at the attribute.
 ///
 /// # See also
 ///
 /// - [`generate_route_handler_tokens`] — generates the registration code for the resolved handler
-/// - [`get_route_path_attribute_value`] — extracts the `path` value from the macro arguments
+/// - [`require_route_path`] — extracts the `path` value, or reports its absence
 #[proc_macro_attribute]
 pub fn get(
     args: proc_macro::TokenStream,
@@ -27,7 +27,10 @@ pub fn get(
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
-    let path = get_route_path_attribute_value(&args).expect("Path for route handler not specified");
+    let path = match require_route_path(&args, Method::GET) {
+        Ok(path) => path,
+        Err(error) => return error.to_compile_error().into(),
+    };
 
     let expanded = generate_route_handler_tokens(&path, Method::GET, &input_fn);
 
@@ -40,13 +43,13 @@ pub fn get(
 ///
 /// - `path` — the route path to match, as a string literal (e.g. `"/users/:id"`)
 ///
-/// The `path` argument is required. Omitting it causes a compile-time panic.
+/// The `path` argument is required. Omitting it is a compile error at the attribute.
 ///
 /// # See also
 ///
 /// - [`get`] — the equivalent macro for `GET` requests
 /// - [`generate_route_handler_tokens`] — generates the registration code for the resolved handler
-/// - [`get_route_path_attribute_value`] — extracts the `path` value from the macro arguments
+/// - [`require_route_path`] — extracts the `path` value, or reports its absence
 #[proc_macro_attribute]
 pub fn delete(
     args: proc_macro::TokenStream,
@@ -55,7 +58,10 @@ pub fn delete(
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
-    let path = get_route_path_attribute_value(&args).expect("Path for route handler not specified");
+    let path = match require_route_path(&args, Method::DELETE) {
+        Ok(path) => path,
+        Err(error) => return error.to_compile_error().into(),
+    };
 
     let expanded = generate_route_handler_tokens(&path, Method::DELETE, &input_fn);
 
@@ -68,14 +74,14 @@ pub fn delete(
 ///
 /// - `path` — the route path to match, as a string literal (e.g. `"/users"`)
 ///
-/// The `path` argument is required. Omitting it causes a compile-time panic.
+/// The `path` argument is required. Omitting it is a compile error at the attribute.
 ///
 /// # See also
 ///
 /// - [`get`] — the equivalent macro for `GET` requests
 /// - [`delete`] — the equivalent macro for `DELETE` requests
 /// - [`generate_route_handler_tokens`] — generates the registration code for the resolved handler
-/// - [`get_route_path_attribute_value`] — extracts the `path` value from the macro arguments
+/// - [`require_route_path`] — extracts the `path` value, or reports its absence
 #[proc_macro_attribute]
 pub fn post(
     args: proc_macro::TokenStream,
@@ -84,7 +90,10 @@ pub fn post(
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
-    let path = get_route_path_attribute_value(&args).expect("Path for route handler not specified");
+    let path = match require_route_path(&args, Method::POST) {
+        Ok(path) => path,
+        Err(error) => return error.to_compile_error().into(),
+    };
 
     let expanded = generate_route_handler_tokens(&path, Method::POST, &input_fn);
 
@@ -97,7 +106,7 @@ pub fn post(
 ///
 /// - `path` — the route path to match, as a string literal (e.g. `"/users/{id}"`)
 ///
-/// The `path` argument is required. Omitting it causes a compile-time panic.
+/// The `path` argument is required. Omitting it is a compile error at the attribute.
 ///
 /// # Body binding
 ///
@@ -109,7 +118,7 @@ pub fn post(
 ///
 /// - [`patch`] — the equivalent macro for partial updates
 /// - [`generate_route_handler_tokens`] — generates the registration code for the resolved handler
-/// - [`get_route_path_attribute_value`] — extracts the `path` value from the macro arguments
+/// - [`require_route_path`] — extracts the `path` value, or reports its absence
 #[proc_macro_attribute]
 pub fn put(
     args: proc_macro::TokenStream,
@@ -118,7 +127,10 @@ pub fn put(
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
-    let path = get_route_path_attribute_value(&args).expect("Path for route handler not specified");
+    let path = match require_route_path(&args, Method::PUT) {
+        Ok(path) => path,
+        Err(error) => return error.to_compile_error().into(),
+    };
 
     let expanded = generate_route_handler_tokens(&path, Method::PUT, &input_fn);
 
@@ -131,7 +143,7 @@ pub fn put(
 ///
 /// - `path` — the route path to match, as a string literal (e.g. `"/users/:id"`)
 ///
-/// The `path` argument is required. Omitting it causes a compile-time panic.
+/// The `path` argument is required. Omitting it is a compile error at the attribute.
 ///
 /// # See also
 ///
@@ -139,7 +151,7 @@ pub fn put(
 /// - [`post`] — the equivalent macro for `POST` requests
 /// - [`delete`] — the equivalent macro for `DELETE` requests
 /// - [`generate_route_handler_tokens`] — generates the registration code for the resolved handler
-/// - [`get_route_path_attribute_value`] — extracts the `path` value from the macro arguments
+/// - [`require_route_path`] — extracts the `path` value, or reports its absence
 #[proc_macro_attribute]
 pub fn patch(
     args: proc_macro::TokenStream,
@@ -148,7 +160,10 @@ pub fn patch(
     let args = parse_macro_input!(args as AttributeArgs);
     let input_fn = parse_macro_input!(input as ItemFn);
 
-    let path = get_route_path_attribute_value(&args).expect("Path for route handler not specified");
+    let path = match require_route_path(&args, Method::PATCH) {
+        Ok(path) => path,
+        Err(error) => return error.to_compile_error().into(),
+    };
 
     let expanded = generate_route_handler_tokens(&path, Method::PATCH, &input_fn);
 
