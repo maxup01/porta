@@ -655,3 +655,54 @@ fn a_handler_with_a_malformed_component_is_not_emitted() {
     assert!(!src.contains("fnget_ticket"), "{src}");
     assert!(!src.contains("register_route_get_ticket"), "{src}");
 }
+
+// ── require_route_path ───────────────────────────────────────────────────────
+
+/// Parses the inside of an attribute's parentheses the way `parse_macro_input!(args
+/// as AttributeArgs)` does at the real call sites.
+fn nested_meta(args: &str) -> Vec<NestedMeta> {
+    use syn::parse::Parser;
+
+    Punctuated::<NestedMeta, Comma>::parse_terminated
+        .parse_str(args)
+        .expect("attribute arguments")
+        .into_iter()
+        .collect()
+}
+
+#[test]
+fn a_present_path_is_returned() {
+    let path = require_route_path(&nested_meta(r#"path = "/users/{id}""#), Method::GET);
+
+    assert_eq!(path.ok(), Some("/users/{id}".to_string()));
+}
+
+#[test]
+fn a_missing_path_is_an_error_rather_than_a_panic() {
+    // `expect` here would abort the expansion as `proc macro panicked`, which names no
+    // file and no line, so a caller with several handlers cannot tell which one is wrong.
+    let error = require_route_path(&nested_meta(r#"other = "x""#), Method::GET)
+        .expect_err("a route without a path should be rejected");
+
+    assert!(error.to_string().contains("path"), "{error}");
+}
+
+#[test]
+fn a_missing_path_names_the_attribute_that_is_missing_it() {
+    // The message is the caller's only pointer, since there is no token to underline
+    // when the argument was never written.
+    for (method, attribute) in [
+        (Method::GET, "#[get]"),
+        (Method::POST, "#[post]"),
+        (Method::PUT, "#[put]"),
+        (Method::PATCH, "#[patch]"),
+        (Method::DELETE, "#[delete]"),
+    ] {
+        let error = require_route_path(&[], method).expect_err("a missing path is an error");
+
+        assert!(
+            error.to_string().contains(attribute),
+            "{method:?} reported `{error}`, which does not mention {attribute}"
+        );
+    }
+}
