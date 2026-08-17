@@ -1,4 +1,4 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use regex::Regex;
 use std::{sync::LazyLock, vec::Vec};
