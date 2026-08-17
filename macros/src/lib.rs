@@ -565,12 +565,13 @@ pub fn component(
 
     let component_type = &input_struct.ident;
     let accessor = format_ident!("{}", args.name);
+    let vis = &input_struct.vis;
 
     let component_struct_span = input_struct.ident.span();
 
     let app_context_access_function_block = quote_spanned! {component_struct_span =>
         impl crate::AppContext {
-            pub fn #accessor() -> &'static #component_type {
+            #vis fn #accessor() -> &'static #component_type {
                 static INSTANCE: ::std::sync::LazyLock<#component_type> = ::std::sync::LazyLock::new(
                     <#component_type as ::core::default::Default>::default
                 );
