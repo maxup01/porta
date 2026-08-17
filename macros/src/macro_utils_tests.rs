@@ -570,3 +570,31 @@ fn a_component_does_not_become_the_request_body() {
         "{src}"
     );
 }
+
+#[test]
+fn a_malformed_component_becomes_a_compile_error() {
+    // The handler is emitted as `fn(&str) -> String`, so a bad `#[component]`
+    // parameter cannot be reported by the generated code — it has to be reported
+    // here, as a `compile_error!` the caller sees at the parameter they wrote.
+    let f: ItemFn = parse_quote! {
+        fn get_ticket(#[component] tickets: TicketHandler) -> String { String::new() }
+    };
+    let src = handler_src(f, "/tickets", Method::GET).replace(' ', "");
+
+    assert!(src.contains("compile_error!"), "{src}");
+    assert!(src.contains("mustbeasharedreference"), "{src}");
+}
+
+#[test]
+fn a_handler_with_a_malformed_component_is_not_emitted() {
+    // Only the error goes out. Emitting the function too would leave `#[component]`
+    // on a parameter of a function no macro is processing, adding a second error
+    // that points away from the real one.
+    let f: ItemFn = parse_quote! {
+        fn get_ticket(#[component] tickets: &mut TicketHandler) -> String { String::new() }
+    };
+    let src = handler_src(f, "/tickets", Method::GET).replace(' ', "");
+
+    assert!(!src.contains("fnget_ticket"), "{src}");
+    assert!(!src.contains("register_route_get_ticket"), "{src}");
+}
