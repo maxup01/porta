@@ -11,3 +11,7 @@ utils = { path = "../utils" }
 syn = { version = "1.0.0", features = ["full"]}
 quote = { version = "1.0.0" }
 proc-macro2 = { version = "1.0.0" }
+
+# Validates `#[component(name = "...")]` before the name is turned into an
+# identifier. See `ACCESSOR_NAME` and `RESERVED_NAME` in `macro_utils`.
+regex = { version = "1.0.0" }
