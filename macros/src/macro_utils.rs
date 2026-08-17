@@ -368,7 +368,10 @@ pub fn generate_route_handler_tokens(
     let fn_block = &input_fn.block;
     let fn_vis = &input_fn.vis;
 
-    let (component_args, request_args) = split_component_args(&input_fn.sig.inputs).unwrap();
+    let (component_args, request_args) = match split_component_args(&input_fn.sig.inputs) {
+        Ok(split_args) => split_args,
+        Err(error) => return error.to_compile_error(),
+    };
 
     let fn_args = get_input_arg_idents_and_types(&request_args);
 
