@@ -706,3 +706,51 @@ fn a_missing_path_names_the_attribute_that_is_missing_it() {
         );
     }
 }
+
+// ── reject_generic_component ─────────────────────────────────────────────────
+
+fn reject(item: ItemStruct) -> syn::Result<()> {
+    reject_generic_component(&item)
+}
+
+#[test]
+fn a_plain_struct_is_accepted() {
+    let item: ItemStruct = parse_quote! { struct TicketStore { rows: Vec<Ticket> } };
+
+    assert!(reject(item).is_ok());
+}
+
+#[test]
+fn a_struct_with_a_type_parameter_is_rejected() {
+    // Only the ident reaches the accessor, so left alone this becomes a bare `Repo` in
+    // the expansion and two `missing generics` errors against code the caller cannot see.
+    let item: ItemStruct = parse_quote! { struct Repo<T> { rows: Vec<T> } };
+    let error = reject(item).expect_err("a generic component should be rejected");
+
+    assert!(error.to_string().contains("Repo"), "{error}");
+}
+
+#[test]
+fn a_struct_with_a_lifetime_is_rejected() {
+    // The accessor promises `&'static Cache`, which a borrow of anything shorter can
+    // never satisfy — this one has no working form at all, not merely an ambiguous one.
+    let item: ItemStruct = parse_quote! { struct Cache<'a> { rows: &'a [Ticket] } };
+
+    assert!(reject(item).is_err());
+}
+
+#[test]
+fn a_struct_with_a_const_parameter_is_rejected() {
+    let item: ItemStruct = parse_quote! { struct Buffer<const N: usize> { rows: [u8; N] } };
+
+    assert!(reject(item).is_err());
+}
+
+#[test]
+fn a_struct_with_only_a_where_clause_is_rejected() {
+    // `Generics` renders just the angle brackets, so this one has nothing to span and
+    // is caught on the `where` clause instead — otherwise it slips through to call site.
+    let item: ItemStruct = parse_quote! { struct Odd where Self: Sized { rows: Vec<u8> } };
+
+    assert!(reject(item).is_err());
+}
