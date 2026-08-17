@@ -382,15 +382,72 @@ fn a_repeated_name_is_an_error() {
 #[test]
 fn a_name_that_cannot_be_an_identifier_is_an_error() {
     // It becomes an accessor ident in generated code, so an unusable one has to be
-    // caught here while there is still a span to report it against.
-    assert!(parse_component_args(r#"name = "ticket handler""#).is_err());
-    assert!(parse_component_args(r#"name = """#).is_err());
-    assert!(parse_component_args(r#"name = "   ""#).is_err());
+    // caught here while there is still a span to report it against. Every name below
+    // makes `format_ident!` panic, which reports no file and no span at all.
+    for name in [
+        r#"name = "ticket handler""#,
+        r#"name = """#,
+        r#"name = "   ""#,
+        r#"name = "1foo""#,
+        r#"name = "ticket-handler""#,
+        r#"name = "ticket\thandler""#,
+        r#"name = "ticket.handler""#,
+    ] {
+        assert!(parse_component_args(name).is_err(), "{name} was accepted");
+    }
+}
+
+#[test]
+fn a_name_that_is_reserved_is_an_error() {
+    // These do not panic — `format_ident!` builds them — so left alone they surface as
+    // `pub fn self()` inside the expansion, pointing at generated code the caller
+    // cannot open rather than at the attribute they wrote.
+    for name in [
+        r#"name = "self""#,
+        r#"name = "Self""#,
+        r#"name = "fn""#,
+        r#"name = "type""#,
+        r#"name = "_""#,
+        r#"name = "yield""#,
+    ] {
+        assert!(parse_component_args(name).is_err(), "{name} was accepted");
+    }
+}
+
+#[test]
+fn a_name_that_is_a_valid_identifier_is_accepted() {
+    // The guard rejects names, not characters: anything `fn <name>()` would accept has
+    // to pass, including the non-ASCII identifiers Rust allows.
+    for name in [
+        r#"name = "tickets""#,
+        r#"name = "_tickets""#,
+        r#"name = "ticket_handler_2""#,
+        r#"name = "café""#,
+        // Weak keywords, legal as method names.
+        r#"name = "union""#,
+        r#"name = "raw""#,
+    ] {
+        assert!(parse_component_args(name).is_ok(), "{name} was rejected");
+    }
+}
+
+#[test]
+fn a_rejected_name_is_reported_at_the_literal() {
+    // Not at `input.span()`, which by this point is the end of a consumed stream and
+    // would underline the closing paren of the attribute instead of the bad name.
+    let error = parse_component_args(r#"name = "ticket-handler""#)
+        .map(|_| ())
+        .expect_err("a hyphenated name should be rejected");
+
+    assert!(
+        error.to_string().contains("ticket-handler"),
+        "{error}: the message should name the value that was rejected"
+    );
 }
 
 // ── split_component_args ─────────────────────────────────────────────────────
 
-fn split(f: ItemFn) -> syn::Result<(Vec<(syn::Ident, syn::Type)>, Punctuated<FnArg, Comma>)> {
+fn split(f: ItemFn) -> syn::Result<ComponentsAndNonComponents> {
     split_component_args(&f.sig.inputs)
 }
 
