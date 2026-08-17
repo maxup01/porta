@@ -3,7 +3,7 @@ extern crate proc_macro;
 mod macro_utils;
 
 use macro_utils::*;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{AttributeArgs, ItemFn, ItemStruct, parse_macro_input};
 use utils::request::route::Method;
 
@@ -566,9 +566,9 @@ pub fn component(
     let component_type = &input_struct.ident;
     let accessor = format_ident!("{}", args.name);
 
-    quote! {
-        #input_struct
+    let component_struct_span = input_struct.ident.span();
 
+    let app_context_access_function_block = quote_spanned! {component_struct_span =>
         impl crate::AppContext {
             pub fn #accessor() -> &'static #component_type {
                 static INSTANCE: ::std::sync::LazyLock<#component_type> = ::std::sync::LazyLock::new(
@@ -578,6 +578,12 @@ pub fn component(
                 &*INSTANCE
             }
         }
+    };
+
+    quote! {
+        #input_struct
+
+        #app_context_access_function_block
 
         const _: () = {
             fn assert_sync<T: ::core::marker::Sync>() {}
