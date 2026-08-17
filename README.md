@@ -10,6 +10,7 @@
 - **Zero-boilerplate startup** — `#[http_server]` rewrites `main` into a full async TLS server.
 - **Automatic parameter binding** — path params, query params, and JSON bodies are parsed and deserialized straight into your function arguments.
 - **Typed responses** — return an `HttpResponse<T>` with a strongly-typed `HttpStatus`; serialization and HTTP formatting are handled for you.
+- **Shared state without plumbing** — `#[component]` makes a struct a process-wide singleton that any handler can ask for by adding a parameter.
 - **CORS when you want it** — name the origins in `#[http_server]` and preflights are answered and headers attached; name none and nothing changes.
 - **TLS by default** — every connection is served over `rustls` with an in-process self-signed certificate.
 - **Bounded by construction** — request size, request duration and connection count all have ceilings, and exceeding one produces a proper HTTP status rather than unbounded growth.
@@ -22,6 +23,7 @@ Add the crate to your `Cargo.toml`, then:
 ```rust
 use embedded_web_server::*;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 #[get(path = "/")]
 fn index() -> HttpResponse<String> {
@@ -47,7 +49,30 @@ fn something(id: u64, body: RandomStruct) -> HttpResponse<String> {
     )
 }
 
-#[http_server(ip = "127.0.0.1", port = 8443)]
+// One instance for the whole process, reachable from any handler as
+// `AppContext::counter()`. The parameter below is what asks for it.
+//
+// `Default` is required: `Counter::default()` is what builds that instance,
+// once, the first time a handler asks.
+#[component(name = "counter")]
+#[derive(Default)]
+struct Counter {
+    hits: Mutex<u64>,
+}
+
+#[get(path = "/hits")]
+fn hits(#[component] counter: &Counter) -> HttpResponse<u64> {
+    let mut hits = counter.hits.lock().unwrap();
+    *hits += 1;
+
+    HttpResponse::new(*hits, HttpStatus::Ok)
+}
+
+#[http_server(
+    ip = "127.0.0.1",
+    port = 8443,
+    allow_origins = ["http://localhost:1420"]
+)]
 async fn main() {}
 ```
 
@@ -64,11 +89,14 @@ curl -k https://127.0.0.1:8443/
 curl -k https://127.0.0.1:8443/hello/world
 curl -k -X POST https://127.0.0.1:8443/something/42 \
      -d '{"num": 7, "name": "abc"}'
+curl -k https://127.0.0.1:8443/hits   # 1, then 2, then 3 …
 ```
+
+`allow_origins` is what lets a browser on `http://localhost:1420` read those answers; drop it and the server behaves identically for everything that is not a browser. See [CORS](#cors).
 
 ## Public API
 
-`use embedded_web_server::*;` brings in everything you need: the six attribute macros, plus `HttpResponse` and `HttpStatus`.
+`use embedded_web_server::*;` brings in everything you need: the seven attribute macros, plus `HttpResponse` and `HttpStatus`.
 
 That is the entire surface. The crate also re-exports `tokio`, `rustls`, `rcgen`, `tokio-rustls`, `ctor`, `serde_json` and the internal `utils` and `server` crates, but all of them are `#[doc(hidden)]` — they exist only so that macro-generated code has somewhere to resolve. They are not covered by this crate's semantic versioning, and naming them by hand means opting out of that guarantee.
 
@@ -93,6 +121,8 @@ Function arguments are filled automatically by name:
 - **Path parameters** (`{id}`) are matched from the URL.
 - **Query parameters** (`?key=value`) are merged in for `GET` and `DELETE`.
 - **Request body** is bound to the single non-path argument for `POST`, `PUT` and `PATCH`.
+
+An argument marked `#[component]` is exempt from all of the above — it comes from the process, not the request, and is removed before any of these rules are applied. See [Shared state](#shared-state).
 
 Query parameters are merged *after* path parameters, so when both supply a name, the query string wins: `GET /users/7?id=9` binds `id = 9`.
 
@@ -222,6 +252,57 @@ An origin that is not listed gets a truthful answer with no CORS headers on it, 
 Credentialed requests (cookies, `Authorization`) are not enabled through this attribute. `utils::cors::CorsConfig` supports them along with an explicit allow-header list; only the origin list is currently reachable from `#[http_server]`.
 
 [simple]: https://developer.mozilla.org/docs/Glossary/CORS-safelisted_request_header
+
+## Shared state
+
+Every handler argument described so far comes out of the request. A database handle, a cache or a counter does not — it belongs to the process and outlives any one request. `#[component]` is how a handler asks for one.
+
+It is two halves. On a struct, it declares the component and names the accessor:
+
+```rust
+#[component(name = "tickets")]
+struct TicketStore {
+    rows: Mutex<Vec<Ticket>>,
+}
+
+impl Default for TicketStore {
+    fn default() -> Self {
+        TicketStore { rows: Mutex::new(Vec::new()) }
+    }
+}
+```
+
+**The struct must implement `Default`, and `Default::default()` is what builds the shared instance.** There is no other constructor and no way to pass one in: nothing calls a component into being, so the only place a value can come from is a function that takes no arguments. `Default` is that function. Write it by hand as above when the starting state matters, or `#[derive(Default)]` when every field's own default will do.
+
+That is also where any setup belongs — reading an environment variable, opening a file, connecting to a database. It runs once, on first access, on whichever request happens to arrive first. A panic inside it poisons the component, and every later access panics too.
+
+On a parameter, it asks for that component:
+
+```rust
+#[get(path = "/tickets/{id}")]
+fn get_ticket(id: u64, #[component] tickets: &TicketStore) -> HttpResponse<String> {
+    let rows = tickets.rows.lock().unwrap();
+    ...
+}
+```
+
+`id` is still bound from the path; `tickets` is not looked for in the request at all. The two can appear in either order, and a component declared ahead of a body argument does not take the body.
+
+**The parameter name is the accessor name.** `#[component(name = "tickets")]` generates `AppContext::tickets()`, and the parameter must be called `tickets` to receive it — that is the only link between the two, because a macro sees tokens and cannot work out which type a name refers to. The type you write is checked against what the accessor returns, so a mismatched pair is a compile error rather than a surprise at runtime.
+
+| Rule | Why |
+|------|-----|
+| `name` is required | `TicketStore` → `tickets` has no answer a caller would predict for `HTTPHandler` or `TicketDb` |
+| The struct must implement `Default` | `Default::default()` is what constructs the shared instance |
+| The struct must be `Sync` | one instance is shared by every connection, and connections run concurrently |
+| The parameter must be `&T` | not `&mut T`, not `T` — every handler holds the same instance |
+| The struct must not be generic | there would be no single type to instantiate |
+
+Instances are created on first access, once, and live for the rest of the process. Nothing is constructed for a component no handler ever asks for.
+
+Because the instance is shared, anything you need to mutate goes behind a `Mutex`, `RwLock` or an atomic **on the field**, as `rows` is above. There is no `sync` switch that wraps the whole struct: locking a field at a time keeps the granularity yours, and a handler that needs two components cannot deadlock on an ordering the macro chose for it.
+
+`AppContext` — the type the accessors are implemented on — is generated by `#[http_server]`, so components live in the same crate as your `main`. Handlers do not name it; the generated code does.
 
 ## Limits
 
