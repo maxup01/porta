@@ -1,8 +1,8 @@
-//! A downstream consumer of `embedded_web_server`, used as a manual playground and
+//! A downstream consumer of `porta`, used as a manual playground and
 //! as the target for the k6 load tests in `../k6`.
 //!
 //! Nothing here reaches into the crate's internals — it depends only on what a real
-//! user gets from `use embedded_web_server::*`, which is what makes it a test of the
+//! user gets from `use porta::*`, which is what makes it a test of the
 //! macro expansion rather than of the workspace. Every path the macros emit resolves
 //! through this crate's single dependency.
 //!
@@ -10,7 +10,7 @@
 //! real socket: parameter binding of each kind, route specificity, and the statuses
 //! the server generates on its own.
 
-use embedded_web_server::*;
+use porta::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
