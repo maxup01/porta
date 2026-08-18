@@ -529,11 +529,11 @@ pub fn generate_route_handler_tokens(
             }
 
             quote! {
-                let body = match ::embedded_web_server::utils::request::request_body::extract_request_body(request) {
+                let body = match ::porta::utils::request::request_body::extract_request_body(request) {
                     Some(body) => body,
                     None => {
-                        return ::embedded_web_server::utils::response::status_response(
-                            ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                        return ::porta::utils::response::status_response(
+                            ::porta::utils::response::HttpStatus::BadRequest
                         )}
                 };
 
@@ -542,7 +542,7 @@ pub fn generate_route_handler_tokens(
         }
         Method::GET | Method::DELETE => {
             quote! {
-                let query_params = ::embedded_web_server::utils::request::query::extract_params(path_from_request.as_str());
+                let query_params = ::porta::utils::request::query::extract_params(path_from_request.as_str());
 
                 if let Some(extracted_query_params) = query_params {
                     map_with_params.extend(extracted_query_params);
@@ -555,11 +555,11 @@ pub fn generate_route_handler_tokens(
         #fn_vis fn #fn_name(request: &str) -> String {
             #component_retrieval_block
 
-            let path_from_request = match ::embedded_web_server::utils::request::route::extract_path_from_request(request) {
+            let path_from_request = match ::porta::utils::request::route::extract_path_from_request(request) {
                 Ok(path_from_request) => path_from_request,
                 Err(_) => {
-                    return ::embedded_web_server::utils::response::status_response(
-                        ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                    return ::porta::utils::response::status_response(
+                        ::porta::utils::response::HttpStatus::BadRequest
                     )}
             };
 
@@ -570,13 +570,13 @@ pub fn generate_route_handler_tokens(
                 None => path_from_request.as_str(),
             };
 
-            let mut map_with_params = match ::embedded_web_server::utils::request::path_param::extract_path_params(
+            let mut map_with_params = match ::porta::utils::request::path_param::extract_path_params(
                 #path, path_without_query
             ) {
                 Ok(map_with_params) => map_with_params,
                 Err(_) => {
-                    return ::embedded_web_server::utils::response::status_response(
-                        ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                    return ::porta::utils::response::status_response(
+                        ::porta::utils::response::HttpStatus::BadRequest
                     )}
             };
 
@@ -585,13 +585,13 @@ pub fn generate_route_handler_tokens(
             #( #deserialized_args )*
 
             let fn_result = (|| #fn_block )();
-            ::embedded_web_server::utils::response::format_response(fn_result)
+            ::porta::utils::response::format_response(fn_result)
         }
 
-        #[::embedded_web_server::ctor::ctor]
+        #[::porta::ctor::ctor]
         fn #register_fn_name() {
-            ::embedded_web_server::utils::request::route::register_route(
-                ::embedded_web_server::utils::request::route::Method::#method_as_tokens,
+            ::porta::utils::request::route::register_route(
+                ::porta::utils::request::route::Method::#method_as_tokens,
                 #path,
                 #fn_name
             );
@@ -654,15 +654,15 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
-                        return ::embedded_web_server::utils::response::status_response(
-                            ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                        return ::porta::utils::response::status_response(
+                            ::porta::utils::response::HttpStatus::BadRequest
                         )}
                 };
                 let #arg_name: #arg_type = match param_val_orig.parse() {
                     Ok(val) => val,
                     Err(_) => {
-                        return ::embedded_web_server::utils::response::status_response(
-                            ::embedded_web_server::utils::response::HttpStatus::NotFound
+                        return ::porta::utils::response::status_response(
+                            ::porta::utils::response::HttpStatus::NotFound
                         )}
                 };
             });
@@ -671,16 +671,16 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
-                        return ::embedded_web_server::utils::response::status_response(
-                            ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                        return ::porta::utils::response::status_response(
+                            ::porta::utils::response::HttpStatus::BadRequest
                         )}
                 };
                 let #arg_name: #arg_type = match param_val_orig {
                     "true" | "1" => true,
                     "false" | "0" => false,
                     _ => {
-                        return ::embedded_web_server::utils::response::status_response(
-                            ::embedded_web_server::utils::response::HttpStatus::NotFound
+                        return ::porta::utils::response::status_response(
+                            ::porta::utils::response::HttpStatus::NotFound
                         )}
                 };
             });
@@ -689,8 +689,8 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
-                        return ::embedded_web_server::utils::response::status_response(
-                            ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                        return ::porta::utils::response::status_response(
+                            ::porta::utils::response::HttpStatus::BadRequest
                         )}
                 };
                 let #arg_name: #arg_type = param_val_orig.to_string();
@@ -700,8 +700,8 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
-                        return ::embedded_web_server::utils::response::status_response(
-                            ::embedded_web_server::utils::response::HttpStatus::BadRequest
+                        return ::porta::utils::response::status_response(
+                            ::porta::utils::response::HttpStatus::BadRequest
                         )}
                 };
                 let param_val: &str;
@@ -714,11 +714,11 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                     param_val = param_val_orig;
                 }
 
-                let #arg_name: #arg_type = match ::embedded_web_server::serde_json::from_str(param_val) {
+                let #arg_name: #arg_type = match ::porta::serde_json::from_str(param_val) {
                     Ok(val) => val,
                     Err(_) => {
-                        return ::embedded_web_server::utils::response::status_response(
-                            ::embedded_web_server::utils::response::HttpStatus::NotFound
+                        return ::porta::utils::response::status_response(
+                            ::porta::utils::response::HttpStatus::NotFound
                         )}
                 };
             });

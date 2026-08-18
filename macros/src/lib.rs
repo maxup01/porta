@@ -326,32 +326,32 @@ pub fn http_server(
 
         static APP_CONTEXT: ::std::sync::LazyLock<AppContext> = ::std::sync::LazyLock::new(|| AppContext::default());
 
-        // Every path below is absolute and routed through `embedded_web_server`, because
+        // Every path below is absolute and routed through `porta`, because
         // this code is expanded into the *caller's* crate. The caller depends only on
-        // `embedded_web_server`, not on tokio/rustls/rcgen/ctor/serde_json directly, so
-        // any bare path here would fail to resolve downstream. See `embedded_web_server`'s
+        // `porta`, not on tokio/rustls/rcgen/ctor/serde_json directly, so
+        // any bare path here would fail to resolve downstream. See `porta`'s
         // crate-root re-exports.
-        #[::embedded_web_server::tokio::main(crate = "::embedded_web_server::tokio")]
+        #[::porta::tokio::main(crate = "::porta::tokio")]
         #sig {
             let subject_alt_names = vec!["embedded-http-server-rs".to_string(), #ip_str.to_string()];
-            let cert = ::embedded_web_server::rcgen::generate_simple_self_signed(subject_alt_names)
+            let cert = ::porta::rcgen::generate_simple_self_signed(subject_alt_names)
                 .expect("Failed to generate self-signed certificate");
 
-            let cert_der = ::embedded_web_server::rustls::pki_types::CertificateDer::from(
+            let cert_der = ::porta::rustls::pki_types::CertificateDer::from(
                 cert.cert.der().to_vec()
             );
-            let key_der = ::embedded_web_server::rustls::pki_types::PrivateKeyDer::Pkcs8(
-                ::embedded_web_server::rustls::pki_types::PrivatePkcs8KeyDer::from(
+            let key_der = ::porta::rustls::pki_types::PrivateKeyDer::Pkcs8(
+                ::porta::rustls::pki_types::PrivatePkcs8KeyDer::from(
                     cert.key_pair.serialize_der()
                 )
             );
 
-            let server_config = ::embedded_web_server::rustls::ServerConfig::builder()
+            let server_config = ::porta::rustls::ServerConfig::builder()
                 .with_no_client_auth()
                 .with_single_cert(vec![cert_der], key_der)
                 .expect("Failed to initialize server config");
 
-            let acceptor = ::embedded_web_server::tokio_rustls::TlsAcceptor::from(
+            let acceptor = ::porta::tokio_rustls::TlsAcceptor::from(
                 ::std::sync::Arc::new(server_config)
             );
 
@@ -360,7 +360,7 @@ pub fn http_server(
             // than a copy of the origin list. An empty list yields a disabled
             // policy, which adds no header to anything.
             let cors = ::std::sync::Arc::new(
-                ::embedded_web_server::utils::cors::CorsConfig::new(
+                ::porta::utils::cors::CorsConfig::new(
                     &[#(#allow_origins),*],
                     false,
                     ::std::option::Option::None,
@@ -368,7 +368,7 @@ pub fn http_server(
             );
 
             let addr = format!("{}:{}", #ip_str, #port);
-            let listener = ::embedded_web_server::tokio::net::TcpListener::bind(&addr)
+            let listener = ::porta::tokio::net::TcpListener::bind(&addr)
                 .await
                 .expect("Failed to bind address");
 
@@ -379,7 +379,7 @@ pub fn http_server(
             const MAX_CONNECTIONS: usize = 512;
 
             let connection_limit = ::std::sync::Arc::new(
-                ::embedded_web_server::tokio::sync::Semaphore::new(MAX_CONNECTIONS)
+                ::porta::tokio::sync::Semaphore::new(MAX_CONNECTIONS)
             );
 
             let mut suppressed_accept_errors: u64 = 0;
@@ -420,7 +420,7 @@ pub fn http_server(
                         // On descriptor exhaustion the refused connection stays in the
                         // backlog, so the socket reports readable again immediately and
                         // an unpaused retry would spin a core until an fd frees.
-                        ::embedded_web_server::tokio::time::sleep(
+                        ::porta::tokio::time::sleep(
                             ::std::time::Duration::from_millis(10)
                         ).await;
 
@@ -431,7 +431,7 @@ pub fn http_server(
                 let acceptor = acceptor.clone();
                 let cors = ::std::sync::Arc::clone(&cors);
 
-                ::embedded_web_server::tokio::spawn(async move {
+                ::porta::tokio::spawn(async move {
                     // Bound to a name, not to `_`: `let _ = permit` would drop it here
                     // and release the slot immediately. Held like this it lives to the
                     // end of the task, so every exit path below returns it.
@@ -443,7 +443,7 @@ pub fn http_server(
                     const HANDSHAKE_TIMEOUT: ::std::time::Duration =
                         ::std::time::Duration::from_secs(10);
 
-                    let mut tls_stream = match ::embedded_web_server::tokio::time::timeout(
+                    let mut tls_stream = match ::porta::tokio::time::timeout(
                         HANDSHAKE_TIMEOUT,
                         acceptor.accept(socket)
                     ).await {
@@ -461,9 +461,9 @@ pub fn http_server(
                     // ordinary code this workspace can call and test. Emitting them
                     // here would put them in the caller's crate, where no test of ours
                     // can reach them.
-                    ::embedded_web_server::server::handle_connection(
+                    ::porta::server::handle_connection(
                         &mut tls_stream,
-                        ::embedded_web_server::server::Limits::default(),
+                        ::porta::server::Limits::default(),
                         &cors
                     ).await;
                 });

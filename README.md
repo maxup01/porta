@@ -1,8 +1,8 @@
-# embedded-web-server
+# porta
 
-**Macro-driven, async embedded web server in Rust.**
+**Macro-driven, async web server in Rust that you embed in your own application.**
 
-`embedded-web-server` is a minimalist, async HTTP server designed to be embedded directly into your application. You define routes as plain functions, annotate them with attribute macros, and turn `main` into a running TLS server with a single attribute — no router setup, no boilerplate.
+`porta` is a minimalist, async HTTP server designed to be embedded directly into your application. You define routes as plain functions, annotate them with attribute macros, and turn `main` into a running TLS server with a single attribute — no router setup, no boilerplate.
 
 ## Features
 
@@ -21,7 +21,7 @@
 Add the crate to your `Cargo.toml`, then:
 
 ```rust
-use embedded_web_server::*;
+use porta::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
@@ -96,7 +96,7 @@ curl -k https://127.0.0.1:8443/hits   # 1, then 2, then 3 …
 
 ## Public API
 
-`use embedded_web_server::*;` brings in everything you need: the seven attribute macros, plus `HttpResponse` and `HttpStatus`.
+`use porta::*;` brings in everything you need: the seven attribute macros, plus `HttpResponse` and `HttpStatus`.
 
 That is the entire surface. The crate also re-exports `tokio`, `rustls`, `rcgen`, `tokio-rustls`, `ctor`, `serde_json` and the internal `utils` and `server` crates, but all of them are `#[doc(hidden)]` — they exist only so that macro-generated code has somewhere to resolve. They are not covered by this crate's semantic versioning, and naming them by hand means opting out of that guarantee.
 
