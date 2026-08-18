@@ -1,6 +1,6 @@
 # testbed
 
-A real downstream consumer of `embedded_web_server`, plus the load tests that run against it.
+A real downstream consumer of `porta`, plus the load tests that run against it.
 
 Excluded from the workspace and from the published crate. Nothing here ships.
 
@@ -8,7 +8,7 @@ Excluded from the workspace and from the published crate. Nothing here ships.
 
 Two things the workspace tests cannot reach.
 
-**Macro expansion in someone else's crate.** `#[http_server]` emits absolute `::embedded_web_server::…` paths into the *caller's* crate. Inside the workspace those paths resolve for reasons that do not apply downstream, so a broken re-export compiles fine in `cargo test` and fails for the first real user. `sample-server` depends on the published crate by path and imports nothing else, which is the only arrangement that proves the plumbing works.
+**Macro expansion in someone else's crate.** `#[http_server]` emits absolute `::porta::…` paths into the *caller's* crate. Inside the workspace those paths resolve for reasons that do not apply downstream, so a broken re-export compiles fine in `cargo test` and fails for the first real user. `sample-server` depends on the published crate by path and imports nothing else, which is the only arrangement that proves the plumbing works.
 
 **The accept loop.** Certificate generation, the listener, the 512-connection semaphore and the TLS handshake are emitted into `main` and exist nowhere as callable code. A k6 run over a real socket is the only thing that exercises them.
 
@@ -38,7 +38,7 @@ Three prerequisites:
 ```
 testbed/
 ├── sample-server/       nine routes across all five verbs
-│   ├── Cargo.toml       depends on embedded_web_server by path, and serde
+│   ├── Cargo.toml       depends on porta by path, and serde
 │   └── src/main.rs
 ├── k6/
 │   ├── config.js        shared URL, TLS options, route table, summary format

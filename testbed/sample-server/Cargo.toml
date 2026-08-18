@@ -10,5 +10,5 @@ publish = false
 [workspace]
 
 [dependencies]
-embedded_web_server = { path = "../.." }
+porta = { path = "../.." }
 serde = { version = "1.0.0", features = ["derive"] }
