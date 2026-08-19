@@ -495,6 +495,11 @@ pub fn generate_route_handler_tokens(
     let fn_block = &input_fn.block;
     let fn_vis = &input_fn.vis;
 
+    if input_fn.sig.asyncness.is_none() {
+        return syn::Error::new_spanned(input_fn, "endpoint handler must be an async function")
+            .to_compile_error();
+    }
+
     let (component_args, request_args) = match split_component_args(&input_fn.sig.inputs) {
         Ok(split_args) => split_args,
         Err(error) => return error.to_compile_error(),
@@ -552,7 +557,7 @@ pub fn generate_route_handler_tokens(
     };
 
     let fn_expanded = quote! {
-        #fn_vis fn #fn_name(request: &str) -> String {
+        #fn_vis async fn #fn_name(request: &str) -> String {
             #component_retrieval_block
 
             let path_from_request = match ::porta::utils::request::route::extract_path_from_request(request) {
@@ -584,16 +589,27 @@ pub fn generate_route_handler_tokens(
 
             #( #deserialized_args )*
 
-            let fn_result = (|| #fn_block )();
+            let fn_result = (async move #fn_block ).await;
             ::porta::utils::response::format_response(fn_result)
         }
 
         #[::porta::ctor::ctor]
         fn #register_fn_name() {
+            // The route table stores fn pointers, and an `async fn` returns an
+            // anonymous `impl Future` that no pointer type can name. Boxing it
+            // here gives the table one concrete type for every handler.
+            fn boxed_handler(
+                request: &str
+            ) -> ::std::pin::Pin<::std::boxed::Box<
+                dyn ::std::future::Future<Output = String> + Send + '_
+            >> {
+                ::std::boxed::Box::pin(#fn_name(request))
+            }
+
             ::porta::utils::request::route::register_route(
                 ::porta::utils::request::route::Method::#method_as_tokens,
                 #path,
-                #fn_name
+                boxed_handler
             );
         }
     };

@@ -1,17 +1,26 @@
 use error::Error;
 use std::{
+    boxed::Box,
     collections::HashMap,
+    pin::Pin,
     str::FromStr,
     sync::{LazyLock, Mutex},
     vec::Vec,
 };
 
-type RouteHandler = fn(&str) -> String;
+/// A registered handler: the raw request in, the full response out.
+///
+/// Handlers are `async fn` in the user's crate, so what is stored is a boxed
+/// future rather than the anonymous one an `async fn` returns — an `impl Future`
+/// has no nameable type to put in a table. The future borrows the request for
+/// `'a`, which is why the pointer is higher-ranked over that lifetime: the
+/// response is produced while the caller still owns the request buffer.
+type RouteHandler = for<'a> fn(&'a str) -> Pin<Box<dyn Future<Output = String> + Send + 'a>>;
 
 /// Lazily initialized, thread-safe map of GET route paths to their handler functions.
 /// Populated at startup via route registration and consulted on each incoming GET request.
 static GET_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
-    let m: HashMap<String, fn(&str) -> String> = HashMap::new();
+    let m = HashMap::new();
     Mutex::new(m)
 });
 
@@ -147,8 +156,10 @@ impl FromStr for Method {
 /// ```
 /// use utils::request::route::{Method, get_route_handlers_by_method};
 ///
-/// fn handler(body: &str) -> String {
-///     "Hello, world!".to_string()
+/// use std::{boxed::Box, pin::Pin};
+///
+/// fn handler(body: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+///     Box::pin(async { "Hello, world!".to_string() })
 /// }
 ///
 /// let routes = get_route_handlers_by_method(Method::GET);
@@ -197,8 +208,10 @@ pub fn get_route_handlers_by_method(
 /// ```
 /// use utils::request::route::{Method, register_route, get_route_function};
 ///
-///fn handler(body: &str) -> String {
-///     "Hello, world!".to_string()
+/// use std::{boxed::Box, pin::Pin};
+///
+/// fn handler(body: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+///     Box::pin(async { "Hello, world!".to_string() })
 /// }
 ///
 /// register_route(Method::GET, "/users", handler);
@@ -246,11 +259,17 @@ pub fn get_route_function(url: &str, method: Method) -> Option<RouteHandler> {
 /// ```
 /// use utils::request::route::{Method, register_route};
 ///
-/// fn hello_handler(body: &str) -> String {
+/// use std::{boxed::Box, pin::Pin};
+///
+/// async fn hello_handler(body: &str) -> String {
 ///     "Hello, world!".to_string()
 /// }
 ///
-/// register_route(Method::GET, "/hello", hello_handler);
+/// fn hello_handler_boxed(body: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+///     Box::pin(hello_handler(body))
+/// }
+///
+/// register_route(Method::GET, "/hello", hello_handler_boxed);
 /// ```
 pub fn register_route(method: Method, path: &str, function: RouteHandler) {
     let mut route_handlers = get_route_handlers_by_method(method).lock().unwrap();
@@ -366,8 +385,10 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
 /// ```
 /// use utils::request::route::{Method, register_route, path_exists};
 ///
-/// fn handler(id: &str) -> String {
-///     "Hello, world!".to_string()
+/// use std::{boxed::Box, pin::Pin};
+///
+/// fn handler(id: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+///     Box::pin(async { "Hello, world!".to_string() })
 /// }
 ///
 /// register_route(Method::GET, "/users/{id}", handler);
@@ -407,8 +428,10 @@ pub fn path_exists(path: &str) -> bool {
 /// ```
 /// use utils::request::route::{Method, methods_for_path, register_route};
 ///
-/// fn handler(request: &str) -> String {
-///     "Hello, world!".to_string()
+/// use std::{boxed::Box, pin::Pin};
+///
+/// fn handler(request: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+///     Box::pin(async { "Hello, world!".to_string() })
 /// }
 ///
 /// register_route(Method::GET, "/articles/{id}", handler);

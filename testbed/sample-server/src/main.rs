@@ -31,14 +31,14 @@ struct NewUser {
 /// No parameters at all — the cheapest possible route, and the one to point a load
 /// test at when measuring the handshake floor rather than the dispatch path.
 #[get(path = "/")]
-fn index() -> HttpResponse<String> {
+async fn index() -> HttpResponse<String> {
     HttpResponse::new("up".to_string(), HttpStatus::Ok)
 }
 
 /// A path parameter parsed into a numeric type. `/users/abc` exercises the failure
 /// side of the same code and answers `404`.
 #[get(path = "/users/{id}")]
-fn get_user(id: u64) -> HttpResponse<User> {
+async fn get_user(id: u64) -> HttpResponse<User> {
     HttpResponse::new(
         User {
             id,
@@ -53,7 +53,7 @@ fn get_user(id: u64) -> HttpResponse<User> {
 /// `{param}` segments than a parameterised one, so this must win for `/users/me`
 /// while `/users/42` still reaches the route above.
 #[get(path = "/users/me")]
-fn current_user() -> HttpResponse<User> {
+async fn current_user() -> HttpResponse<User> {
     HttpResponse::new(
         User {
             id: 1,
@@ -68,7 +68,7 @@ fn current_user() -> HttpResponse<User> {
 /// either answers `400`, since a missing parameter is a client error rather than a
 /// missing resource.
 #[get(path = "/search")]
-fn search(q: String, limit: u32) -> HttpResponse<String> {
+async fn search(q: String, limit: u32) -> HttpResponse<String> {
     HttpResponse::new(format!("{} x{}", q, limit), HttpStatus::Ok)
 }
 
@@ -77,7 +77,7 @@ fn search(q: String, limit: u32) -> HttpResponse<String> {
 /// A JSON body deserialized straight into an argument, answering `201` rather than
 /// `200` so the status line is visibly not hardcoded.
 #[post(path = "/users")]
-fn create_user(body: NewUser) -> HttpResponse<User> {
+async fn create_user(body: NewUser) -> HttpResponse<User> {
     HttpResponse::new(
         User {
             id: 7,
@@ -93,7 +93,7 @@ fn create_user(body: NewUser) -> HttpResponse<User> {
 /// A path parameter and a body in the same handler: `id` comes from the URL, and
 /// `body` is bound because it is the argument that is not a path parameter.
 #[put(path = "/users/{id}")]
-fn replace_user(id: u64, body: NewUser) -> HttpResponse<User> {
+async fn replace_user(id: u64, body: NewUser) -> HttpResponse<User> {
     HttpResponse::new(
         User {
             id,
@@ -107,7 +107,7 @@ fn replace_user(id: u64, body: NewUser) -> HttpResponse<User> {
 // ── PATCH ────────────────────────────────────────────────────────────────────
 
 #[patch(path = "/users/{id}")]
-fn update_user(id: u64, body: NewUser) -> HttpResponse<User> {
+async fn update_user(id: u64, body: NewUser) -> HttpResponse<User> {
     HttpResponse::new(
         User {
             id,
@@ -121,14 +121,14 @@ fn update_user(id: u64, body: NewUser) -> HttpResponse<User> {
 // ── DELETE ───────────────────────────────────────────────────────────────────
 
 #[delete(path = "/users/{id}")]
-fn delete_user(id: u64) -> HttpResponse<String> {
+async fn delete_user(id: u64) -> HttpResponse<String> {
     HttpResponse::new(format!("deleted {}", id), HttpStatus::Ok)
 }
 
 /// Returns a body that must never reach the wire: `204` is defined to carry no
 /// content, so the response should arrive with neither a body nor `Content-Length`.
 #[delete(path = "/sessions/{id}")]
-fn end_session(id: u64) -> HttpResponse<String> {
+async fn end_session(id: u64) -> HttpResponse<String> {
     HttpResponse::new(format!("ended {}", id), HttpStatus::NoContent)
 }
 
