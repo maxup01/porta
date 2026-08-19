@@ -319,8 +319,6 @@ pub fn http_server(
     let allow_origins = args.allow_origins;
 
     let expanded = quote! {
-
-
         #[derive(Default)]
         pub struct AppContext {}
 
@@ -504,7 +502,7 @@ pub fn http_server(
 /// }
 ///
 /// #[get(path = "/tickets/{id}")]
-/// fn get_ticket(id: u64, #[component] tickets: &TicketStore) -> HttpResponse<String> {
+/// async fn get_ticket(id: u64, #[component] tickets: &TicketStore) -> HttpResponse<String> {
 ///     ...
 /// }
 /// ```

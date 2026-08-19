@@ -26,12 +26,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
 #[get(path = "/")]
-fn index() -> HttpResponse<String> {
+async fn index() -> HttpResponse<String> {
     HttpResponse::new("Hello, world!".to_string(), HttpStatus::Ok)
 }
 
 #[get(path = "/hello/{name}")]
-fn hello(name: String) -> HttpResponse<String> {
+async fn hello(name: String) -> HttpResponse<String> {
     HttpResponse::new(format!("Hello, {}!", name), HttpStatus::Ok)
 }
 
@@ -42,7 +42,7 @@ struct RandomStruct {
 }
 
 #[post(path = "/something/{id}")]
-fn something(id: u64, body: RandomStruct) -> HttpResponse<String> {
+async fn something(id: u64, body: RandomStruct) -> HttpResponse<String> {
     HttpResponse::new(
         format!("Received id: {} num: {} name: {}", id, body.num, body.name),
         HttpStatus::Ok,
@@ -61,7 +61,7 @@ struct Counter {
 }
 
 #[get(path = "/hits")]
-fn hits(#[component] counter: &Counter) -> HttpResponse<u64> {
+async fn hits(#[component] counter: &Counter) -> HttpResponse<u64> {
     let mut hits = counter.hits.lock().unwrap();
     *hits += 1;
 
@@ -280,7 +280,7 @@ On a parameter, it asks for that component:
 
 ```rust
 #[get(path = "/tickets/{id}")]
-fn get_ticket(id: u64, #[component] tickets: &TicketStore) -> HttpResponse<String> {
+async fn get_ticket(id: u64, #[component] tickets: &TicketStore) -> HttpResponse<String> {
     let rows = tickets.rows.lock().unwrap();
     ...
 }
@@ -326,7 +326,7 @@ mod store {
 
 // error: `tickets` is private
 #[get(path = "/tickets")]
-fn list(#[component] tickets: &TicketStore) -> HttpResponse<String> { … }
+async fn list(#[component] tickets: &TicketStore) -> HttpResponse<String> { … }
 ```
 
 Write `pub(crate) struct TicketStore` and both the type and its accessor reach the whole crate. Inheriting the visibility rather than always emitting `pub` is what keeps the generated method from being more public than the type it hands out.

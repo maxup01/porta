@@ -36,7 +36,7 @@ struct Deleted {
 // ── GET ──────────────────────────────────────────────────────────────────────
 
 #[get(path = "/items/{id}")]
-fn get_item(id: u32) -> HttpResponse<Item> {
+async fn get_item(id: u32) -> HttpResponse<Item> {
     HttpResponse::new(
         Item {
             id,
@@ -47,7 +47,7 @@ fn get_item(id: u32) -> HttpResponse<Item> {
 }
 
 #[get(path = "/items")]
-fn get_item_by_query(id: u32) -> HttpResponse<Item> {
+async fn get_item_by_query(id: u32) -> HttpResponse<Item> {
     HttpResponse::new(
         Item {
             id,
@@ -57,9 +57,9 @@ fn get_item_by_query(id: u32) -> HttpResponse<Item> {
     )
 }
 
-#[test]
-fn test_get_with_path_param() {
-    let response = get_item("GET /items/1");
+#[tokio::test]
+async fn test_get_with_path_param() {
+    let response = get_item("GET /items/1").await;
     eprintln!("{}", response);
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
@@ -68,25 +68,25 @@ fn test_get_with_path_param() {
     assert_eq!(item.name, "test");
 }
 
-#[test]
-fn test_get_with_query_param() {
-    let response = get_item_by_query("GET /items?id=5");
+#[tokio::test]
+async fn test_get_with_query_param() {
+    let response = get_item_by_query("GET /items?id=5").await;
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
     let item: Item = serde_json::from_str(body).unwrap();
     assert_eq!(item.id, 5);
 }
 
-#[test]
-fn test_get_with_invalid_path_param_returns_404() {
-    let response = get_item("GET /items/abc");
+#[tokio::test]
+async fn test_get_with_invalid_path_param_returns_404() {
+    let response = get_item("GET /items/abc").await;
     eprintln!("{}", response);
     assert!(response.starts_with(EXPECTED_404_PREFIX));
 }
 
-#[test]
-fn test_get_with_invalid_query_param_returns_404() {
-    let response = get_item_by_query("GET /items?id=abc");
+#[tokio::test]
+async fn test_get_with_invalid_query_param_returns_404() {
+    let response = get_item_by_query("GET /items?id=abc").await;
     eprintln!("{}", response);
     assert!(response.starts_with(EXPECTED_404_PREFIX));
 }
@@ -94,14 +94,14 @@ fn test_get_with_invalid_query_param_returns_404() {
 // ── POST ─────────────────────────────────────────────────────────────────────
 
 #[post(path = "/items")]
-fn create_item(name: String) -> HttpResponse<Created> {
+async fn create_item(name: String) -> HttpResponse<Created> {
     HttpResponse::new(Created { id: 1, name }, HttpStatus::Ok)
 }
 
-#[test]
-fn test_post_extracts_body() {
+#[tokio::test]
+async fn test_post_extracts_body() {
     let response =
-        create_item("POST /items HTTP/1.1\r\nContent-Type: application/json\r\n\r\nwidget");
+        create_item("POST /items HTTP/1.1\r\nContent-Type: application/json\r\n\r\nwidget").await;
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
     let created: Created = serde_json::from_str(body).unwrap();
@@ -112,14 +112,15 @@ fn test_post_extracts_body() {
 // ── PATCH ────────────────────────────────────────────────────────────────────
 
 #[patch(path = "/items/{id}")]
-fn update_item(id: u32, name: String) -> HttpResponse<Updated> {
+async fn update_item(id: u32, name: String) -> HttpResponse<Updated> {
     HttpResponse::new(Updated { id, name }, HttpStatus::Ok)
 }
 
-#[test]
-fn test_patch_with_path_param_and_body() {
+#[tokio::test]
+async fn test_patch_with_path_param_and_body() {
     let response =
-        update_item("PATCH /items/7 HTTP/1.1\r\nContent-Type: application/json\r\n\r\nnewname");
+        update_item("PATCH /items/7 HTTP/1.1\r\nContent-Type: application/json\r\n\r\nnewname")
+            .await;
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
     let updated: Updated = serde_json::from_str(body).unwrap();
@@ -127,24 +128,26 @@ fn test_patch_with_path_param_and_body() {
     assert_eq!(updated.name, "newname");
 }
 
-#[test]
-fn test_patch_with_invalid_id_returns_404() {
+#[tokio::test]
+async fn test_patch_with_invalid_id_returns_404() {
     let response =
-        update_item("PATCH /items/abc HTTP/1.1\r\nContent-Type: application/json\r\n\r\nnewname");
+        update_item("PATCH /items/abc HTTP/1.1\r\nContent-Type: application/json\r\n\r\nnewname")
+            .await;
     assert!(response.starts_with(EXPECTED_404_PREFIX));
 }
 
 // ── PUT ──────────────────────────────────────────────────────────────────────
 
 #[put(path = "/items/{id}")]
-fn replace_item(id: u32, name: String) -> HttpResponse<Updated> {
+async fn replace_item(id: u32, name: String) -> HttpResponse<Updated> {
     HttpResponse::new(Updated { id, name }, HttpStatus::Ok)
 }
 
-#[test]
-fn test_put_with_path_param_and_body() {
+#[tokio::test]
+async fn test_put_with_path_param_and_body() {
     let response =
-        replace_item("PUT /items/3 HTTP/1.1\r\nContent-Type: application/json\r\n\r\nreplaced");
+        replace_item("PUT /items/3 HTTP/1.1\r\nContent-Type: application/json\r\n\r\nreplaced")
+            .await;
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
     let updated: Updated = serde_json::from_str(body).unwrap();
@@ -152,34 +155,36 @@ fn test_put_with_path_param_and_body() {
     assert_eq!(updated.name, "replaced");
 }
 
-#[test]
-fn test_put_with_invalid_id_returns_404() {
+#[tokio::test]
+async fn test_put_with_invalid_id_returns_404() {
     let response =
-        replace_item("PUT /items/abc HTTP/1.1\r\nContent-Type: application/json\r\n\r\nreplaced");
+        replace_item("PUT /items/abc HTTP/1.1\r\nContent-Type: application/json\r\n\r\nreplaced")
+            .await;
     assert!(response.starts_with(EXPECTED_404_PREFIX));
 }
 
-#[test]
-fn test_put_without_body_returns_400() {
-    let response = replace_item("PUT /items/3 HTTP/1.1\r\nContent-Type: application/json\r\n\r\n");
+#[tokio::test]
+async fn test_put_without_body_returns_400() {
+    let response =
+        replace_item("PUT /items/3 HTTP/1.1\r\nContent-Type: application/json\r\n\r\n").await;
     assert!(response.starts_with(EXPECTED_400_PREFIX));
 }
 
 // ── DELETE ───────────────────────────────────────────────────────────────────
 
 #[delete(path = "/items/{id}")]
-fn delete_item(id: u32) -> HttpResponse<Deleted> {
+async fn delete_item(id: u32) -> HttpResponse<Deleted> {
     HttpResponse::new(Deleted { id }, HttpStatus::Ok)
 }
 
 #[delete(path = "/items")]
-fn delete_item_by_query(id: u32) -> HttpResponse<Deleted> {
+async fn delete_item_by_query(id: u32) -> HttpResponse<Deleted> {
     HttpResponse::new(Deleted { id }, HttpStatus::Ok)
 }
 
-#[test]
-fn test_delete_with_path_param() {
-    let response = delete_item("DELETE /items/3");
+#[tokio::test]
+async fn test_delete_with_path_param() {
+    let response = delete_item("DELETE /items/3").await;
     eprintln!("{}", response);
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
@@ -187,25 +192,25 @@ fn test_delete_with_path_param() {
     assert_eq!(deleted.id, 3);
 }
 
-#[test]
-fn test_delete_with_query_param() {
-    let response = delete_item_by_query("DELETE /items?id=9");
+#[tokio::test]
+async fn test_delete_with_query_param() {
+    let response = delete_item_by_query("DELETE /items?id=9").await;
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
     let deleted: Deleted = serde_json::from_str(body).unwrap();
     assert_eq!(deleted.id, 9);
 }
 
-#[test]
-fn test_delete_with_invalid_path_param_returns_404() {
-    let response = delete_item("DELETE /items/abc");
+#[tokio::test]
+async fn test_delete_with_invalid_path_param_returns_404() {
+    let response = delete_item("DELETE /items/abc").await;
     eprintln!("{}", response);
     assert!(response.starts_with(EXPECTED_404_PREFIX));
 }
 
-#[test]
-fn test_delete_with_invalid_query_param_returns_404() {
-    let response = delete_item_by_query("DELETE /items?id=abc");
+#[tokio::test]
+async fn test_delete_with_invalid_query_param_returns_404() {
+    let response = delete_item_by_query("DELETE /items?id=abc").await;
     assert!(response.starts_with(EXPECTED_404_PREFIX));
 }
 
@@ -217,7 +222,7 @@ fn test_delete_with_invalid_query_param_returns_404() {
 // `quote!` block and have no callable form here — see the note at the bottom.
 
 #[get(path = "/errors/{id}")]
-fn error_item(id: u32) -> HttpResponse<Item> {
+async fn error_item(id: u32) -> HttpResponse<Item> {
     HttpResponse::new(
         Item {
             id,
@@ -228,7 +233,7 @@ fn error_item(id: u32) -> HttpResponse<Item> {
 }
 
 #[get(path = "/errors-query")]
-fn error_by_query(id: u32) -> HttpResponse<Item> {
+async fn error_by_query(id: u32) -> HttpResponse<Item> {
     HttpResponse::new(
         Item {
             id,
@@ -239,14 +244,14 @@ fn error_by_query(id: u32) -> HttpResponse<Item> {
 }
 
 #[post(path = "/errors-body")]
-fn error_body(name: String) -> HttpResponse<Created> {
+async fn error_body(name: String) -> HttpResponse<Created> {
     HttpResponse::new(Created { id: 1, name }, HttpStatus::Ok)
 }
 
-#[test]
-fn malformed_request_line_returns_400() {
+#[tokio::test]
+async fn malformed_request_line_returns_400() {
     // No second whitespace-delimited token, so there is no request target to read.
-    let response = error_item("GARBAGE");
+    let response = error_item("GARBAGE").await;
 
     assert!(
         response.starts_with(EXPECTED_400_PREFIX),
@@ -254,11 +259,11 @@ fn malformed_request_line_returns_400() {
     );
 }
 
-#[test]
-fn missing_parameter_returns_400_not_404() {
+#[tokio::test]
+async fn missing_parameter_returns_400_not_404() {
     // `id` is neither a path segment nor a query parameter here. A value that is
     // present but unparseable is a 404; one that is absent is a 400.
-    let response = error_by_query("GET /errors-query");
+    let response = error_by_query("GET /errors-query").await;
 
     assert!(
         response.starts_with(EXPECTED_400_PREFIX),
@@ -266,10 +271,10 @@ fn missing_parameter_returns_400_not_404() {
     );
 }
 
-#[test]
-fn post_with_empty_body_returns_400() {
+#[tokio::test]
+async fn post_with_empty_body_returns_400() {
     let response =
-        error_body("POST /errors-body HTTP/1.1\r\nContent-Type: application/json\r\n\r\n");
+        error_body("POST /errors-body HTTP/1.1\r\nContent-Type: application/json\r\n\r\n").await;
 
     assert!(
         response.starts_with(EXPECTED_400_PREFIX),
@@ -279,11 +284,11 @@ fn post_with_empty_body_returns_400() {
 
 // ── Query string handling in generated handlers ──────────────────────────────
 
-#[test]
-fn query_string_is_stripped_before_path_params_are_matched() {
+#[tokio::test]
+async fn query_string_is_stripped_before_path_params_are_matched() {
     // The handler splits the target itself: `/errors/7` must match `/errors/{id}`
     // even though the request carries a query string the route pattern cannot.
-    let response = error_item("GET /errors/7?unrelated=ignored");
+    let response = error_item("GET /errors/7?unrelated=ignored").await;
 
     assert!(
         response.starts_with(EXPECTED_OK_PREFIX),
@@ -294,11 +299,11 @@ fn query_string_is_stripped_before_path_params_are_matched() {
     assert_eq!(item.id, 7);
 }
 
-#[test]
-fn query_parameter_overrides_path_parameter_of_the_same_name() {
+#[tokio::test]
+async fn query_parameter_overrides_path_parameter_of_the_same_name() {
     // Path params are collected first, then query params are merged over them.
     // Pinning this because it is a silent precedence rule, not an obvious one.
-    let response = error_item("GET /errors/7?id=9");
+    let response = error_item("GET /errors/7?id=9").await;
 
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
 
@@ -308,9 +313,9 @@ fn query_parameter_overrides_path_parameter_of_the_same_name() {
 
 // ── Response framing ─────────────────────────────────────────────────────────
 
-#[test]
-fn successful_response_carries_framing_headers() {
-    let response = get_item("GET /items/1");
+#[tokio::test]
+async fn successful_response_carries_framing_headers() {
+    let response = get_item("GET /items/1").await;
 
     assert!(response.contains("Content-Type: application/json\r\n"));
     assert!(response.contains("Date: "));
@@ -320,18 +325,21 @@ fn successful_response_carries_framing_headers() {
     assert!(!response.contains("Connection:"), "{response}");
 }
 
-#[test]
-fn error_response_carries_framing_headers() {
-    let response = get_item("GET /items/abc");
+#[tokio::test]
+async fn error_response_carries_framing_headers() {
+    let response = get_item("GET /items/abc").await;
 
     assert!(response.contains("Content-Type: text/plain\r\n"));
     assert!(response.contains("Date: "));
     assert!(!response.contains("Connection:"), "{response}");
 }
 
-#[test]
-fn content_length_matches_the_body_it_describes() {
-    for response in [get_item("GET /items/1"), get_item("GET /items/abc")] {
+#[tokio::test]
+async fn content_length_matches_the_body_it_describes() {
+    for response in [
+        get_item("GET /items/1").await,
+        get_item("GET /items/abc").await,
+    ] {
         let body = body_of(&response);
         let expected = format!("Content-Length: {}\r\n", body.len());
 
@@ -396,7 +404,7 @@ struct Greeting {
 }
 
 #[get(path = "/hits")]
-fn record_hit(#[component] counter: &Counter) -> HttpResponse<Hits> {
+async fn record_hit(#[component] counter: &Counter) -> HttpResponse<Hits> {
     HttpResponse::new(
         Hits {
             total: counter.record(),
@@ -406,7 +414,7 @@ fn record_hit(#[component] counter: &Counter) -> HttpResponse<Hits> {
 }
 
 #[get(path = "/greet/{name}")]
-fn greet(name: String, #[component] greeter: &Greeter) -> HttpResponse<Greeting> {
+async fn greet(name: String, #[component] greeter: &Greeter) -> HttpResponse<Greeting> {
     HttpResponse::new(
         Greeting {
             message: format!("{} {}", greeter.prefix, name),
@@ -419,7 +427,7 @@ fn greet(name: String, #[component] greeter: &Greeter) -> HttpResponse<Greeting>
 // to the first parameter that is not a path param, so a component left in that list
 // would take the body's place and the real parameter would answer 400.
 #[post(path = "/greetings")]
-fn create_greeting(#[component] greeter: &Greeter, name: String) -> HttpResponse<Greeting> {
+async fn create_greeting(#[component] greeter: &Greeter, name: String) -> HttpResponse<Greeting> {
     HttpResponse::new(
         Greeting {
             message: format!("{} {}", greeter.prefix, name),
@@ -428,9 +436,9 @@ fn create_greeting(#[component] greeter: &Greeter, name: String) -> HttpResponse
     )
 }
 
-#[test]
-fn a_handler_receives_the_component_it_asks_for() {
-    let response = record_hit("GET /hits");
+#[tokio::test]
+async fn a_handler_receives_the_component_it_asks_for() {
+    let response = record_hit("GET /hits").await;
 
     assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
 
@@ -439,13 +447,14 @@ fn a_handler_receives_the_component_it_asks_for() {
     assert!(hits.total >= 1);
 }
 
-#[test]
-fn a_component_keeps_its_state_between_requests() {
+#[tokio::test]
+async fn a_component_keeps_its_state_between_requests() {
     // The whole point of a component: the second request sees what the first did.
     // Asserted as strictly-greater rather than exactly-one-more because the other
     // tests in this file share the counter and run on their own threads.
-    let first: Hits = serde_json::from_str(body_of(&record_hit("GET /hits"))).expect("first");
-    let second: Hits = serde_json::from_str(body_of(&record_hit("GET /hits"))).expect("second");
+    let first: Hits = serde_json::from_str(body_of(&record_hit("GET /hits").await)).expect("first");
+    let second: Hits =
+        serde_json::from_str(body_of(&record_hit("GET /hits").await)).expect("second");
 
     assert!(
         second.total > first.total,
@@ -461,9 +470,9 @@ fn the_context_hands_back_one_shared_instance() {
     assert!(std::ptr::eq(AppContext::counter(), AppContext::counter()));
 }
 
-#[test]
-fn a_component_sits_alongside_a_path_parameter() {
-    let response = greet("GET /greet/world");
+#[tokio::test]
+async fn a_component_sits_alongside_a_path_parameter() {
+    let response = greet("GET /greet/world").await;
 
     assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
 
@@ -472,10 +481,11 @@ fn a_component_sits_alongside_a_path_parameter() {
     assert_eq!(greeting.message, "hello world");
 }
 
-#[test]
-fn a_component_declared_before_the_body_does_not_take_it() {
+#[tokio::test]
+async fn a_component_declared_before_the_body_does_not_take_it() {
     let response =
-        create_greeting("POST /greetings HTTP/1.1\r\nContent-Type: application/json\r\n\r\nworld");
+        create_greeting("POST /greetings HTTP/1.1\r\nContent-Type: application/json\r\n\r\nworld")
+            .await;
 
     assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
 

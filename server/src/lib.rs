@@ -163,7 +163,7 @@ where
             ReadOutcome::Abandon => break,
         };
 
-        let response = dispatch(&request, cors);
+        let response = dispatch(&request, cors).await;
 
         // Either side may end it: the client by saying so, the server by having
         // spent the budget.
@@ -207,7 +207,7 @@ fn closing(response: String) -> String {
 /// the CORS headers: a handler's response and a status the server generated itself
 /// need the same ones, and a browser rejects the second as readily as the first
 /// when they are missing.
-pub fn dispatch(request: &str, cors: &CorsConfig) -> String {
+pub async fn dispatch(request: &str, cors: &CorsConfig) -> String {
     let path = match extract_path_from_request(request) {
         Ok(path) => path,
         Err(_) => return status_response(HttpStatus::BadRequest),
@@ -237,7 +237,7 @@ pub fn dispatch(request: &str, cors: &CorsConfig) -> String {
     };
 
     let response = match route_function {
-        Some(route_function) => route_function(request),
+        Some(route_function) => route_function(request).await,
         None => {
             let allowed_methods = methods_for_path(path_without_query);
 
