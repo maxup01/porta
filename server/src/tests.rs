@@ -1,4 +1,5 @@
 use super::*;
+use std::pin::Pin;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// The production defaults, with the idle timeout cut to something a test suite
@@ -198,7 +199,8 @@ async fn request_over_the_ceiling_is_rejected_with_413() {
     };
 
     let response = exchange(limits, |client| {
-        let mut request = b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 4096\r\n\r\n".to_vec();
+        let mut request =
+            b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 4096\r\n\r\n".to_vec();
         request.extend(std::iter::repeat(b'x').take(4096));
 
         send_chunks(client, vec![request])
@@ -252,7 +254,8 @@ async fn unparseable_header_block_is_rejected_with_400() {
 #[tokio::test]
 async fn body_that_is_not_utf8_is_rejected_with_400() {
     let response = exchange(limits(), |client| {
-        let mut request = b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 4\r\n\r\n".to_vec();
+        let mut request =
+            b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 4\r\n\r\n".to_vec();
         // A lone continuation byte sequence: valid bytes, invalid UTF-8.
         request.extend([0xFF, 0xFE, 0xFD, 0xFC]);
 
@@ -361,12 +364,18 @@ async fn a_generated_error_does_not_end_a_healthy_connection() {
     // A 404 is an answer, not a fault. The request was framed correctly, so the
     // connection is still synchronised and the client may keep using it.
     let response = exchange(limits(), |client| {
-        send_chunks(client, vec![b"GET /nothing-registered HTTP/1.1\r\n\r\n".to_vec()])
+        send_chunks(
+            client,
+            vec![b"GET /nothing-registered HTTP/1.1\r\n\r\n".to_vec()],
+        )
     })
     .await;
 
     assert!(!response.contains("Connection: close"), "{response}");
-    assert!(response.contains("Content-Type: text/plain\r\n"), "{response}");
+    assert!(
+        response.contains("Content-Type: text/plain\r\n"),
+        "{response}"
+    );
 }
 
 #[tokio::test]
@@ -469,9 +478,7 @@ async fn a_client_asking_to_close_is_obeyed() {
     let response = exchange(limits(), |client| {
         send_chunks(
             client,
-            vec![
-                b"GET /keep-alive-close/items HTTP/1.1\r\nConnection: close\r\n\r\n".to_vec(),
-            ],
+            vec![b"GET /keep-alive-close/items HTTP/1.1\r\nConnection: close\r\n\r\n".to_vec()],
         )
     })
     .await;
@@ -577,8 +584,8 @@ async fn an_idle_connection_is_closed_without_a_second_response() {
 /// The route tables are process-global, so every path here is prefixed to keep
 /// these tests from colliding with each other or with `utils`'.
 fn register(method: Method, path: &str) {
-    fn handler(_: &str) -> String {
-        utils::response::status_response(HttpStatus::Ok)
+    fn handler(_: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+        Box::pin(async { utils::response::status_response(HttpStatus::Ok) })
     }
 
     utils::request::route::register_route(method, path, handler);
@@ -590,63 +597,77 @@ fn header_value<'a>(response: &'a str, name: &str) -> Option<&'a str> {
     utils::request::header::get_header(
         // `get_header` skips the first line, and a response's first line is its
         // status line — the same shape as a request line, for this purpose.
-        response,
-        name,
+        response, name,
     )
 }
 
-#[test]
-fn dispatch_answers_an_unroutable_path_with_404() {
+#[tokio::test]
+async fn dispatch_answers_an_unroutable_path_with_404() {
     let response = dispatch(
         "GET /nothing-registered HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
+    )
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+        "{response}"
     );
-
-    assert!(response.starts_with("HTTP/1.1 404 Not Found\r\n"), "{response}");
 }
 
-#[test]
-fn dispatch_answers_a_malformed_request_line_with_400() {
-    let response = dispatch("GARBAGE", &CorsConfig::disabled());
+#[tokio::test]
+async fn dispatch_answers_a_malformed_request_line_with_400() {
+    let response = dispatch("GARBAGE", &CorsConfig::disabled()).await;
 
-    assert!(response.starts_with("HTTP/1.1 400 Bad Request\r\n"), "{response}");
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "{response}"
+    );
 }
 
-#[test]
-fn dispatch_answers_an_unsupported_verb_with_404_when_nothing_serves_the_path() {
+#[tokio::test]
+async fn dispatch_answers_an_unsupported_verb_with_404_when_nothing_serves_the_path() {
     // CONNECT does not parse as a Method, so no handler resolves; with no route
     // registered for the path either, that is a 404 rather than a 405.
     let response = dispatch(
         "CONNECT /nothing-registered HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
-    );
+    )
+    .await;
 
-    assert!(response.starts_with("HTTP/1.1 404 Not Found\r\n"), "{response}");
+    assert!(
+        response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+        "{response}"
+    );
 }
 
 // ── 405 and Allow ────────────────────────────────────────────────────────────
 
-#[test]
-fn a_405_names_the_methods_that_are_served() {
+#[tokio::test]
+async fn a_405_names_the_methods_that_are_served() {
     register(Method::GET, "/dispatch-allow/items");
     register(Method::DELETE, "/dispatch-allow/items");
 
     let response = dispatch(
         "POST /dispatch-allow/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
-    );
+    )
+    .await;
 
     assert!(
         response.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"),
         "{response}"
     );
-    assert_eq!(header_value(&response, "Allow"), Some("GET, DELETE, OPTIONS"));
+    assert_eq!(
+        header_value(&response, "Allow"),
+        Some("GET, DELETE, OPTIONS")
+    );
 }
 
 // ── OPTIONS ──────────────────────────────────────────────────────────────────
 
-#[test]
-fn a_plain_options_request_is_answered_with_204_and_allow() {
+#[tokio::test]
+async fn a_plain_options_request_is_answered_with_204_and_allow() {
     // The bug this closes: OPTIONS is not a `Method`, so this used to fall through
     // the routing table and answer 404 for a path that plainly exists.
     register(Method::GET, "/dispatch-options/items");
@@ -655,7 +676,8 @@ fn a_plain_options_request_is_answered_with_204_and_allow() {
     let response = dispatch(
         "OPTIONS /dispatch-options/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
-    );
+    )
+    .await;
 
     assert!(
         response.starts_with("HTTP/1.1 204 No Content\r\n"),
@@ -664,24 +686,29 @@ fn a_plain_options_request_is_answered_with_204_and_allow() {
     assert_eq!(header_value(&response, "Allow"), Some("GET, POST, OPTIONS"));
 }
 
-#[test]
-fn an_options_request_for_an_unserved_path_is_still_a_404() {
+#[tokio::test]
+async fn an_options_request_for_an_unserved_path_is_still_a_404() {
     let response = dispatch(
         "OPTIONS /dispatch-options/nothing-here HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
-    );
+    )
+    .await;
 
-    assert!(response.starts_with("HTTP/1.1 404 Not Found\r\n"), "{response}");
+    assert!(
+        response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+        "{response}"
+    );
 }
 
-#[test]
-fn an_options_request_ignores_the_query_string() {
+#[tokio::test]
+async fn an_options_request_ignores_the_query_string() {
     register(Method::GET, "/dispatch-options-query/items");
 
     let response = dispatch(
         "OPTIONS /dispatch-options-query/items?id=5 HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
-    );
+    )
+    .await;
 
     assert!(
         response.starts_with("HTTP/1.1 204 No Content\r\n"),
@@ -701,12 +728,16 @@ fn preflight(path: &str, method: &str, origin: &str) -> String {
     )
 }
 
-#[test]
-fn a_preflight_from_an_allowed_origin_is_granted() {
+#[tokio::test]
+async fn a_preflight_from_an_allowed_origin_is_granted() {
     register(Method::POST, "/dispatch-preflight/users");
 
     let cors = CorsConfig::new(&[ORIGIN], false, None);
-    let response = dispatch(&preflight("/dispatch-preflight/users", "POST", ORIGIN), &cors);
+    let response = dispatch(
+        &preflight("/dispatch-preflight/users", "POST", ORIGIN),
+        &cors,
+    )
+    .await;
 
     assert!(
         response.starts_with("HTTP/1.1 204 No Content\r\n"),
@@ -726,15 +757,20 @@ fn a_preflight_from_an_allowed_origin_is_granted() {
     );
 }
 
-#[test]
-fn a_preflight_from_an_unlisted_origin_gets_no_cors_headers() {
+#[tokio::test]
+async fn a_preflight_from_an_unlisted_origin_gets_no_cors_headers() {
     register(Method::POST, "/dispatch-preflight-denied/users");
 
     let cors = CorsConfig::new(&[ORIGIN], false, None);
     let response = dispatch(
-        &preflight("/dispatch-preflight-denied/users", "POST", "http://evil.test"),
+        &preflight(
+            "/dispatch-preflight-denied/users",
+            "POST",
+            "http://evil.test",
+        ),
         &cors,
-    );
+    )
+    .await;
 
     // Still a truthful answer about the resource; just no permission attached.
     assert!(
@@ -745,31 +781,36 @@ fn a_preflight_from_an_unlisted_origin_gets_no_cors_headers() {
     assert_eq!(header_value(&response, "Allow"), Some("POST, OPTIONS"));
 }
 
-#[test]
-fn a_preflight_is_not_answered_when_no_policy_is_configured() {
+#[tokio::test]
+async fn a_preflight_is_not_answered_when_no_policy_is_configured() {
     register(Method::POST, "/dispatch-preflight-off/users");
 
     let response = dispatch(
         &preflight("/dispatch-preflight-off/users", "POST", ORIGIN),
         &CorsConfig::disabled(),
-    );
+    )
+    .await;
 
     assert!(header_value(&response, "Access-Control-Allow-Origin").is_none());
 }
 
 // ── CORS headers on real responses ───────────────────────────────────────────
 
-#[test]
-fn a_handler_response_carries_the_cors_headers() {
+#[tokio::test]
+async fn a_handler_response_carries_the_cors_headers() {
     // The second leg: a granted preflight is worthless if the request it
     // authorised comes back without the headers.
     register(Method::GET, "/dispatch-cors/items");
 
     let cors = CorsConfig::new(&[ORIGIN], false, None);
     let response = dispatch(
-        &format!("GET /dispatch-cors/items HTTP/1.1\r\nOrigin: {}\r\n\r\n", ORIGIN),
+        &format!(
+            "GET /dispatch-cors/items HTTP/1.1\r\nOrigin: {}\r\n\r\n",
+            ORIGIN
+        ),
         &cors,
-    );
+    )
+    .await;
 
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
     assert_eq!(
@@ -779,30 +820,41 @@ fn a_handler_response_carries_the_cors_headers() {
     assert_eq!(header_value(&response, "Vary"), Some("Origin"));
 }
 
-#[test]
-fn a_generated_error_carries_the_cors_headers_too() {
+#[tokio::test]
+async fn a_generated_error_carries_the_cors_headers_too() {
     // A 404 a script cannot read is a "Load failed" in the console rather than a
     // 404, which is the whole reason CORS is hard to debug.
     let cors = CorsConfig::new(&["*"], false, None);
     let response = dispatch(
-        &format!("GET /dispatch-cors/nowhere HTTP/1.1\r\nOrigin: {}\r\n\r\n", ORIGIN),
+        &format!(
+            "GET /dispatch-cors/nowhere HTTP/1.1\r\nOrigin: {}\r\n\r\n",
+            ORIGIN
+        ),
         &cors,
-    );
+    )
+    .await;
 
-    assert!(response.starts_with("HTTP/1.1 404 Not Found\r\n"), "{response}");
-    assert_eq!(header_value(&response, "Access-Control-Allow-Origin"), Some("*"));
+    assert!(
+        response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+        "{response}"
+    );
+    assert_eq!(
+        header_value(&response, "Access-Control-Allow-Origin"),
+        Some("*")
+    );
 }
 
-#[test]
-fn a_request_without_an_origin_is_answered_exactly_as_before() {
+#[tokio::test]
+async fn a_request_without_an_origin_is_answered_exactly_as_before() {
     register(Method::GET, "/dispatch-cors-plain/items");
 
     let cors = CorsConfig::new(&["*"], false, None);
-    let with_policy = dispatch("GET /dispatch-cors-plain/items HTTP/1.1\r\n\r\n", &cors);
+    let with_policy = dispatch("GET /dispatch-cors-plain/items HTTP/1.1\r\n\r\n", &cors).await;
     let without_policy = dispatch(
         "GET /dispatch-cors-plain/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
-    );
+    )
+    .await;
 
     assert!(!with_policy.contains("Access-Control-"), "{with_policy}");
     // The Date header differs by the second at worst; compare the framing instead.
@@ -825,8 +877,11 @@ async fn cors_headers_reach_the_wire() {
             send_chunks(
                 client,
                 vec![
-                    format!("GET /wire-cors/items HTTP/1.1\r\nOrigin: {}\r\n\r\n", ORIGIN)
-                        .into_bytes(),
+                    format!(
+                        "GET /wire-cors/items HTTP/1.1\r\nOrigin: {}\r\n\r\n",
+                        ORIGIN
+                    )
+                    .into_bytes(),
                 ],
             )
         },

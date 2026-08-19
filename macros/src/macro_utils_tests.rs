@@ -47,16 +47,30 @@ fn extracts_complex_type_arg() {
 
 // ── generate_route_handler_tokens ────────────────────────────────────────────
 
+/// Handlers are `async fn` because the generated one awaits the body and the
+/// route table stores futures. A sync handler is rejected at expansion rather
+/// than surfacing as a mismatched fn pointer at the registration site.
+#[test]
+fn a_sync_handler_is_a_compile_error() {
+    let f: ItemFn = parse_quote! { fn get_user(id: u32) -> String { String::new() } };
+    let src = handler_src(f, "/users/{id}", Method::GET);
+    assert!(src.contains("compile_error"), "{src}");
+    assert!(
+        src.contains("async"),
+        "the error should say what is missing: {src}"
+    );
+}
+
 #[test]
 fn get_handler_contains_fn_name() {
-    let f: ItemFn = parse_quote! { pub fn get_user(id: u32) -> String { format!("{}", id) } };
+    let f: ItemFn = parse_quote! { pub async fn get_user(id: u32) -> String { format!("{}", id) } };
     let src = handler_src(f, "/users/{id}", Method::GET);
     assert!(src.contains("get_user"));
 }
 
 #[test]
 fn get_handler_registers_route() {
-    let f: ItemFn = parse_quote! { fn list_items() -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn list_items() -> String { String::new() } };
     let src = handler_src(f, "/items", Method::GET);
     assert!(src.contains("register_route_list_items"));
     assert!(src.contains("register_route"));
@@ -64,70 +78,71 @@ fn get_handler_registers_route() {
 
 #[test]
 fn post_handler_includes_request_body_extraction() {
-    let f: ItemFn = parse_quote! { fn create_item(name: String) -> String { name } };
+    let f: ItemFn = parse_quote! { async fn create_item(name: String) -> String { name } };
     let src = handler_src(f, "/items", Method::POST);
     assert!(src.contains("extract_request_body"));
 }
 
 #[test]
 fn patch_handler_includes_request_body_extraction() {
-    let f: ItemFn = parse_quote! { fn update_item(id: u32, payload: String) -> String { payload } };
+    let f: ItemFn =
+        parse_quote! { async fn update_item(id: u32, payload: String) -> String { payload } };
     let src = handler_src(f, "/items/{id}", Method::PATCH);
     assert!(src.contains("extract_request_body"));
 }
 
 #[test]
 fn delete_handler_omits_request_body_extraction() {
-    let f: ItemFn = parse_quote! { fn delete_item(id: u32) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn delete_item(id: u32) -> String { String::new() } };
     let src = handler_src(f, "/items/{id}", Method::DELETE);
     assert!(!src.contains("extract_request_body"));
 }
 
 #[test]
 fn get_handler_omits_request_body_extraction() {
-    let f: ItemFn = parse_quote! { fn get_item(id: u32) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn get_item(id: u32) -> String { String::new() } };
     let src = handler_src(f, "/items/{id}", Method::GET);
     assert!(!src.contains("extract_request_body"));
 }
 
 #[test]
 fn handler_uses_correct_path() {
-    let f: ItemFn = parse_quote! { fn handler(id: u32) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn handler(id: u32) -> String { String::new() } };
     let src = handler_src(f, "/things/{id}", Method::GET);
     assert!(src.contains("/things/{id}"));
 }
 
 #[test]
 fn handler_contains_format_response_call() {
-    let f: ItemFn = parse_quote! { fn handler() -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn handler() -> String { String::new() } };
     let src = handler_src(f, "/ping", Method::GET);
     assert!(src.contains("format_response"));
 }
 
 #[test]
 fn handler_method_token_get() {
-    let f: ItemFn = parse_quote! { fn handler() -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn handler() -> String { String::new() } };
     let src = handler_src(f, "/ping", Method::GET);
     assert!(src.contains("GET"));
 }
 
 #[test]
 fn handler_method_token_post() {
-    let f: ItemFn = parse_quote! { fn handler(body: String) -> String { body } };
+    let f: ItemFn = parse_quote! { async fn handler(body: String) -> String { body } };
     let src = handler_src(f, "/ping", Method::POST);
     assert!(src.contains("POST"));
 }
 
 #[test]
 fn handler_method_token_delete() {
-    let f: ItemFn = parse_quote! { fn handler(id: u32) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn handler(id: u32) -> String { String::new() } };
     let src = handler_src(f, "/items/{id}", Method::DELETE);
     assert!(src.contains("DELETE"));
 }
 
 #[test]
 fn handler_method_token_patch() {
-    let f: ItemFn = parse_quote! { fn handler(id: u32, data: String) -> String { data } };
+    let f: ItemFn = parse_quote! { async fn handler(id: u32, data: String) -> String { data } };
     let src = handler_src(f, "/items/{id}", Method::PATCH);
     assert!(src.contains("PATCH"));
 }
@@ -139,8 +154,11 @@ fn numeric_types_use_parse() {
     for ty in &[
         "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64",
     ] {
-        let f: ItemFn =
-            syn::parse_str(&format!("fn h(val: {}) -> String {{ String::new() }}", ty)).unwrap();
+        let f: ItemFn = syn::parse_str(&format!(
+            "async fn h(val: {}) -> String {{ String::new() }}",
+            ty
+        ))
+        .unwrap();
         let src = handler_src(f, "/r/{val}", Method::GET);
         eprintln!("{}", src);
         assert!(
@@ -153,28 +171,28 @@ fn numeric_types_use_parse() {
 
 #[test]
 fn bool_type_matches_true_false_strings() {
-    let f: ItemFn = parse_quote! { fn h(flag: bool) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn h(flag: bool) -> String { String::new() } };
     let src = handler_src(f, "/r/{flag}", Method::GET);
     assert!(src.contains("true") && src.contains("false"));
 }
 
 #[test]
 fn string_type_calls_to_string() {
-    let f: ItemFn = parse_quote! { fn h(name: String) -> String { name } };
+    let f: ItemFn = parse_quote! { async fn h(name: String) -> String { name } };
     let src = handler_src(f, "/r/{name}", Method::GET);
     assert!(src.contains("to_string"));
 }
 
 #[test]
 fn custom_type_uses_serde_json_from_str() {
-    let f: ItemFn = parse_quote! { fn h(payload: MyDto) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn h(payload: MyDto) -> String { String::new() } };
     let src = handler_src(f, "/r/{payload}", Method::GET);
     assert!(src.contains("serde_json") && src.contains("from_str"));
 }
 
 #[test]
 fn custom_type_wraps_in_quotes_when_not_json_object() {
-    let f: ItemFn = parse_quote! { fn h(val: MyEnum) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn h(val: MyEnum) -> String { String::new() } };
     let src = handler_src(f, "/r/{val}", Method::GET);
     assert!(src.contains("starts_with") && src.contains("ends_with"));
 }
@@ -186,35 +204,36 @@ fn custom_type_wraps_in_quotes_when_not_json_object() {
 
 #[test]
 fn numeric_parse_failure_returns_404() {
-    let f: ItemFn = parse_quote! { fn h(id: u32) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn h(id: u32) -> String { String::new() } };
     let src = handler_src(f, "/r/{id}", Method::GET);
     assert!(src.contains("status_response") && src.contains("NotFound"));
 }
 
 #[test]
 fn bool_unknown_value_returns_404() {
-    let f: ItemFn = parse_quote! { fn h(flag: bool) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn h(flag: bool) -> String { String::new() } };
     let src = handler_src(f, "/r/{flag}", Method::GET);
     assert!(src.contains("status_response") && src.contains("NotFound"));
 }
 
 #[test]
 fn serde_failure_returns_404() {
-    let f: ItemFn = parse_quote! { fn h(payload: MyDto) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn h(payload: MyDto) -> String { String::new() } };
     let src = handler_src(f, "/r/{payload}", Method::GET);
     assert!(src.contains("status_response") && src.contains("NotFound"));
 }
 
 #[test]
 fn missing_param_returns_400() {
-    let f: ItemFn = parse_quote! { fn h(id: u32) -> String { String::new() } };
+    let f: ItemFn = parse_quote! { async fn h(id: u32) -> String { String::new() } };
     let src = handler_src(f, "/r/{id}", Method::GET);
     assert!(src.contains("status_response") && src.contains("BadRequest"));
 }
 
 #[test]
 fn no_response_bytes_are_built_inside_the_macro() {
-    let f: ItemFn = parse_quote! { fn h(id: u32, payload: MyDto) -> String { String::new() } };
+    let f: ItemFn =
+        parse_quote! { async fn h(id: u32, payload: MyDto) -> String { String::new() } };
 
     for method in [
         Method::GET,
@@ -602,7 +621,7 @@ fn every_component_gets_its_own_binding() {
 #[test]
 fn a_component_is_not_looked_up_in_the_parameter_map() {
     let f: ItemFn = parse_quote! {
-        fn get_ticket(id: u32, #[component] tickets: &TicketHandler) -> String { String::new() }
+        async fn get_ticket(id: u32, #[component] tickets: &TicketHandler) -> String { String::new() }
     };
     let src = handler_src(f, "/tickets/{id}", Method::GET).replace(' ', "");
 
@@ -618,7 +637,7 @@ fn a_component_does_not_become_the_request_body() {
     // The body binds to the first parameter that is not a path param. A component
     // declared ahead of the real body parameter used to take its place.
     let f: ItemFn = parse_quote! {
-        fn create_ticket(#[component] tickets: &TicketHandler, body: String) -> String { body }
+        async fn create_ticket(#[component] tickets: &TicketHandler, body: String) -> String { body }
     };
     let src = handler_src(f, "/tickets", Method::POST).replace(' ', "");
 
@@ -634,7 +653,7 @@ fn a_malformed_component_becomes_a_compile_error() {
     // parameter cannot be reported by the generated code — it has to be reported
     // here, as a `compile_error!` the caller sees at the parameter they wrote.
     let f: ItemFn = parse_quote! {
-        fn get_ticket(#[component] tickets: TicketHandler) -> String { String::new() }
+        async fn get_ticket(#[component] tickets: TicketHandler) -> String { String::new() }
     };
     let src = handler_src(f, "/tickets", Method::GET).replace(' ', "");
 
@@ -648,7 +667,7 @@ fn a_handler_with_a_malformed_component_is_not_emitted() {
     // on a parameter of a function no macro is processing, adding a second error
     // that points away from the real one.
     let f: ItemFn = parse_quote! {
-        fn get_ticket(#[component] tickets: &mut TicketHandler) -> String { String::new() }
+        async fn get_ticket(#[component] tickets: &mut TicketHandler) -> String { String::new() }
     };
     let src = handler_src(f, "/tickets", Method::GET).replace(' ', "");
 
