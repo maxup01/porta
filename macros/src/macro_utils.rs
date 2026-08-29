@@ -734,7 +734,7 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                     Ok(val) => val,
                     Err(_) => {
                         return ::porta::utils::response::status_response(
-                            ::porta::utils::response::HttpStatus::NotFound
+                            ::porta::utils::response::HttpStatus::BadRequest
                         )}
                 };
             });
