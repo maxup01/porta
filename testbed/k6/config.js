@@ -9,6 +9,9 @@
 // connectivity, and only on a cold cache.
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.4/index.js';
 
+// Needed only for `setResponseCallback` below. The scripts import `http` themselves.
+import http from 'k6/http';
+
 // Must match the ip and port in the `#[http_server]` attribute on sample-server's
 // main. The macro takes them as literals, so the server cannot be pointed
 // elsewhere at runtime and this cannot be overridden by an environment variable
@@ -32,6 +35,21 @@ export const TLS_OPTIONS = {
 export const CONNECTION_OPTIONS = {
         noConnectionReuse: false,
 };
+
+// k6 counts every 4xx as a failed request by default, and these scripts ask for
+// 4xx deliberately — five entries in ERROR_ROUTES, plus the oversized and
+// non-UTF-8 bodies in smoke.js. Left at the default, `http_req_failed` measures
+// how many error routes the suite exercises rather than anything about the server,
+// and no threshold on it can be satisfied.
+//
+// A 4xx the suite asked for is a correct answer; `checks` is what judges whether
+// it was the right one. What remains a failure here is what the server should
+// never do: a 5xx, or a request that never completed.
+//
+// Set here rather than in BASE_OPTIONS: this is a function call, not a script
+// option, and a `responseCallback` key in an exported `options` object is silently
+// ignored. Every script imports this module, so importing it applies the callback.
+http.setResponseCallback(http.expectedStatuses({ min: 200, max: 499 }));
 
 export const BASE_OPTIONS = {
         ...TLS_OPTIONS,
@@ -69,7 +87,7 @@ export const ERROR_ROUTES = {
         missingParam: { method: 'GET', path: '/search', status: 400 },
         noSuchRoute: { method: 'GET', path: '/nowhere', status: 404 },
         wrongVerb: { method: 'POST', path: '/users/42', status: 405 },
-        emptyBody: { method: 'POST', path: '/users', status: 400 },
+        emptyBody: { method: 'POST', path: '/users', status: 400, body: null },
 };
 
 export const USER_BODY = JSON.stringify({ name: 'grace', active: true });

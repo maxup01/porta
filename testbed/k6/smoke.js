@@ -12,8 +12,8 @@
 //
 //   k6 run smoke.js
 
-import http from 'k6/http';
-import { check, fail } from 'k6';
+import http from "k6/http";
+import { check, fail } from "k6";
 import {
         BASE_URL,
         BASE_OPTIONS,
@@ -22,7 +22,7 @@ import {
         USER_BODY,
         JSON_PARAMS,
         ALLOWED_ORIGIN,
-} from './config.js';
+} from "./config.js";
 
 export const options = {
         ...BASE_OPTIONS,
@@ -33,19 +33,24 @@ export const options = {
         // concurrency and no contention, so anything less than a clean sweep is a
         // genuine defect rather than load-induced noise.
         thresholds: {
-                checks: ['rate==1.0'],
-                http_req_failed: ['rate==0.0'],
+                checks: ["rate==1.0"],
+                http_req_failed: ["rate==0.0"],
         },
 };
 
 // Bodies are only sent for the verbs that bind one. Sending a body to GET or
 // DELETE would not break anything — the server ignores it for those methods — but
 // it would misrepresent what is being tested.
-const SENDS_BODY = ['POST', 'PUT', 'PATCH'];
+const SENDS_BODY = ["POST", "PUT", "PATCH"];
 
 function request(name, route) {
         const url = `${BASE_URL}${route.path}`;
-        const body = SENDS_BODY.includes(route.method) ? USER_BODY : null;
+        const body =
+                "body" in route
+                        ? route.body
+                        : SENDS_BODY.includes(route.method)
+                                ? USER_BODY
+                                : null;
 
         const response = http.request(route.method, url, body, JSON_PARAMS);
 
@@ -58,7 +63,7 @@ function request(name, route) {
                 // Printed rather than swallowed: a bare "check failed" line gives no way to
                 // tell a wrong status from a connection that never completed.
                 console.error(
-                        `${name}: expected ${route.status}, got ${response.status} — ${response.error || 'no transport error'}`,
+                        `${name}: expected ${route.status}, got ${response.status} — ${response.error || "no transport error"}`,
                 );
         }
 
@@ -88,11 +93,11 @@ export default function() {
                 // HTTP/1.1 is persistent by default, so silence here is the server
                 // saying the connection is still usable. Saying `close` would mean
                 // the keep-alive loop had given up on a request it answered fine.
-                'leaves the connection open': (r) =>
-                        (r.headers['Connection'] || '').toLowerCase() !== 'close',
-                'sends a Date header': (r) => r.headers['Date'] !== undefined,
-                'serves JSON from a handler': (r) =>
-                        (r.headers['Content-Type'] || '').includes('application/json'),
+                "leaves the connection open": (r) =>
+                        (r.headers["Connection"] || "").toLowerCase() !== "close",
+                "sends a Date header": (r) => r.headers["Date"] !== undefined,
+                "serves JSON from a handler": (r) =>
+                        (r.headers["Content-Type"] || "").includes("application/json"),
         });
 
         // Two requests down one connection. k6 reuses connections per VU by default,
@@ -102,24 +107,26 @@ export default function() {
         const firstOfPair = http.get(`${BASE_URL}/`);
         const secondOfPair = http.get(`${BASE_URL}/`);
 
-        check({ firstOfPair, secondOfPair }, {
-                'a reused connection still answers': () =>
-                        firstOfPair.status === 200 && secondOfPair.status === 200,
-                'a reused connection skips the handshake': () =>
-                        secondOfPair.timings.connecting === 0 &&
-                        secondOfPair.timings.tls_handshaking === 0,
-        });
+        check(
+                { firstOfPair, secondOfPair },
+                {
+                        "a reused connection still answers": () =>
+                                firstOfPair.status === 200 && secondOfPair.status === 200,
+                        "a reused connection skips the handshake": () =>
+                                secondOfPair.timings.connecting === 0 &&
+                                secondOfPair.timings.tls_handshaking === 0,
+                },
+        );
 
-        // The client's half of the negotiation. Asking to close must be obeyed, and
-        // the server has to say so rather than leaving the client to find out.
-        const closing = http.get(`${BASE_URL}/`, {
-                headers: { Connection: 'close' },
-        });
-
-        check(closing, {
-                'a client asking to close is told the connection ends': (r) =>
-                        (r.headers['Connection'] || '').toLowerCase() === 'close',
-        });
+        // The client's half of the negotiation — a client asking to close must be obeyed,
+        // and told so — is not checked here, because it cannot be seen from k6.
+        // `Connection` is a hop-by-hop header, and k6's Go HTTP client consumes it rather
+        // than exposing it: the server does send it (curl shows it on the same request)
+        // and `r.headers` still has no such key. A check on it fails whatever the server
+        // does, which is worse than no check at all.
+        //
+        // `server::tests::a_client_asking_to_close_is_obeyed` asserts the literal bytes
+        // over a pipe, where nothing is stripped, and names a line when it breaks.
 
         // 204 is the one status where the body must not be sent at all. The handler
         // behind this route returns a non-empty body on purpose, so a body arriving
@@ -127,9 +134,10 @@ export default function() {
         const noContent = http.del(`${BASE_URL}/sessions/1`);
 
         check(noContent, {
-                '204 carries no body': (r) => r.body === null || r.body === '',
-                '204 omits Content-Length': (r) => r.headers['Content-Length'] === undefined,
-                '204 omits Content-Type': (r) => r.headers['Content-Type'] === undefined,
+                "204 carries no body": (r) => r.body === null || r.body === "",
+                "204 omits Content-Length": (r) =>
+                        r.headers["Content-Length"] === undefined,
+                "204 omits Content-Type": (r) => r.headers["Content-Type"] === undefined,
         });
 
         // The literal route and the parameterised one are registered for the same
@@ -138,12 +146,16 @@ export default function() {
         const literal = http.get(`${BASE_URL}/users/me`);
         const parameterised = http.get(`${BASE_URL}/users/42`);
 
-        check({ literal, parameterised }, {
-                '/users/me reaches the literal route': () =>
-                        literal.status === 200 && JSON.parse(literal.body).name === 'me',
-                '/users/42 reaches the parameterised route': () =>
-                        parameterised.status === 200 && JSON.parse(parameterised.body).id === 42,
-        });
+        check(
+                { literal, parameterised },
+                {
+                        "/users/me reaches the literal route": () =>
+                                literal.status === 200 && JSON.parse(literal.body).name === "me",
+                        "/users/42 reaches the parameterised route": () =>
+                                parameterised.status === 200 &&
+                                JSON.parse(parameterised.body).id === 42,
+                },
+        );
 
         // Path params are collected first, then query params are merged over them, so
         // a query string wins a name collision. Silent precedence rules are worth
@@ -151,7 +163,7 @@ export default function() {
         const collision = http.get(`${BASE_URL}/users/7?id=9`);
 
         check(collision, {
-                'query parameter overrides path parameter': (r) =>
+                "query parameter overrides path parameter": (r) =>
                         r.status === 200 && JSON.parse(r.body).id === 9,
         });
 
@@ -159,12 +171,12 @@ export default function() {
         // script pays the allocation just by importing.
         const oversized = http.post(
                 `${BASE_URL}/users`,
-                'x'.repeat(2 * 1024 * 1024),
+                "x".repeat(2 * 1024 * 1024),
                 JSON_PARAMS,
         );
 
         check(oversized, {
-                'body over the ceiling is refused with 413': (r) => r.status === 413,
+                "body over the ceiling is refused with 413": (r) => r.status === 413,
         });
 
         // A body that is bytes rather than text. The server decodes with a checked
@@ -176,7 +188,7 @@ export default function() {
         );
 
         check(invalidUtf8, {
-                'body that is not UTF-8 is refused with 400': (r) => r.status === 400,
+                "body that is not UTF-8 is refused with 400": (r) => r.status === 400,
         });
 
         // The exchange a browser performs before a JSON POST: an OPTIONS request of
@@ -186,19 +198,19 @@ export default function() {
         const preflight = http.options(`${BASE_URL}/users`, null, {
                 headers: {
                         Origin: ALLOWED_ORIGIN,
-                        'Access-Control-Request-Method': 'POST',
-                        'Access-Control-Request-Headers': 'content-type',
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "content-type",
                 },
         });
 
         check(preflight, {
-                'preflight is answered with 204': (r) => r.status === 204,
-                'preflight allows the configured origin': (r) =>
-                        r.headers['Access-Control-Allow-Origin'] === ALLOWED_ORIGIN,
-                'preflight names the methods the path serves': (r) =>
-                        r.headers['Access-Control-Allow-Methods'] === 'POST',
-                'preflight echoes the requested headers': (r) =>
-                        r.headers['Access-Control-Allow-Headers'] === 'content-type',
+                "preflight is answered with 204": (r) => r.status === 204,
+                "preflight allows the configured origin": (r) =>
+                        r.headers["Access-Control-Allow-Origin"] === ALLOWED_ORIGIN,
+                "preflight names the methods the path serves": (r) =>
+                        r.headers["Access-Control-Allow-Methods"] === "POST",
+                "preflight echoes the requested headers": (r) =>
+                        r.headers["Access-Control-Allow-Headers"] === "content-type",
         });
 
         // The second leg. A granted preflight is worthless if the response it
@@ -208,27 +220,27 @@ export default function() {
         });
 
         check(crossOrigin, {
-                'cross-origin POST still answers 201': (r) => r.status === 201,
-                'cross-origin response carries the allow-origin header': (r) =>
-                        r.headers['Access-Control-Allow-Origin'] === ALLOWED_ORIGIN,
-                'cross-origin response varies by origin': (r) =>
-                        r.headers['Vary'] === 'Origin',
+                "cross-origin POST still answers 201": (r) => r.status === 201,
+                "cross-origin response carries the allow-origin header": (r) =>
+                        r.headers["Access-Control-Allow-Origin"] === ALLOWED_ORIGIN,
+                "cross-origin response varies by origin": (r) =>
+                        r.headers["Vary"] === "Origin",
         });
 
         // An origin the server was not configured for gets a truthful answer with no
         // permission attached, which is how a browser is told no.
         const strangerPreflight = http.options(`${BASE_URL}/users`, null, {
                 headers: {
-                        Origin: 'http://evil.test',
-                        'Access-Control-Request-Method': 'POST',
+                        Origin: "http://evil.test",
+                        "Access-Control-Request-Method": "POST",
                 },
         });
 
         check(strangerPreflight, {
-                'unlisted origin gets no allow-origin header': (r) =>
-                        r.headers['Access-Control-Allow-Origin'] === undefined,
-                'unlisted origin is still told what the path serves': (r) =>
-                        r.headers['Allow'] === 'POST, OPTIONS',
+                "unlisted origin gets no allow-origin header": (r) =>
+                        r.headers["Access-Control-Allow-Origin"] === undefined,
+                "unlisted origin is still told what the path serves": (r) =>
+                        r.headers["Allow"] === "POST, OPTIONS",
         });
 
         // A plain OPTIONS, with no browser involved: a capability query, and a path
@@ -236,21 +248,21 @@ export default function() {
         const capabilities = http.options(`${BASE_URL}/users/42`);
 
         check(capabilities, {
-                'plain OPTIONS is answered with 204': (r) => r.status === 204,
-                'plain OPTIONS lists every method and OPTIONS': (r) =>
-                        r.headers['Allow'] === 'GET, PUT, PATCH, DELETE, OPTIONS',
+                "plain OPTIONS is answered with 204": (r) => r.status === 204,
+                "plain OPTIONS lists every method and OPTIONS": (r) =>
+                        r.headers["Allow"] === "GET, PUT, PATCH, DELETE, OPTIONS",
         });
 }
 
 // Runs once before the iteration. If the server is not up, every check below
 // would fail in the same confusing way, so fail loudly and immediately instead.
 export function setup() {
-        const response = http.get(`${BASE_URL}/`, { timeout: '5s' });
+        const response = http.get(`${BASE_URL}/`, { timeout: "5s" });
 
         if (response.status !== 200) {
                 fail(
                         `sample-server is not answering on ${BASE_URL} ` +
-                        `(status ${response.status}, ${response.error || 'no transport error'}) — ` +
+                        `(status ${response.status}, ${response.error || "no transport error"}) — ` +
                         `start it with: cd testbed/sample-server && cargo run`,
                 );
         }
