@@ -354,12 +354,11 @@ where
 
             match parse_request_result {
                 Ok(httparse::Status::Complete(header_len)) => {
-                    // Absent, unparseable or duplicated Content-Length is treated as
-                    // no body. Chunked transfer encoding is not supported, so such a
-                    // request is dispatched with an empty body rather than rejected.
-                    let content_length = header_value(&parsed_request, "content-length")
-                        .and_then(|value| value.trim().parse::<usize>().ok())
-                        .unwrap_or(0);
+                    // Chunked transfer encoding is not supported, so such a request
+                    // is dispatched with an empty body rather than rejected.
+                    let Some(content_length) = declared_body_length(&parsed_request) else {
+                        return ReadOutcome::Reject(HttpStatus::BadRequest);
+                    };
 
                     let client_persists = client_persists(
                         parsed_request.version,
@@ -443,6 +442,49 @@ fn header_value<'a>(request: &httparse::Request<'_, 'a>, name: &str) -> Option<&
         .iter()
         .find(|header| header.name.eq_ignore_ascii_case(name))
         .and_then(|header| std::str::from_utf8(header.value).ok())
+}
+
+/// How many body bytes the request declares, or `None` when the declaration cannot
+/// be trusted.
+///
+/// Absent means no body, which is the ordinary case for a `GET`. Anything else has
+/// to be one unambiguous decimal, because this number is what decides where the
+/// request ends: RFC 9112 §6.3 makes a duplicated or unparseable `Content-Length` an
+/// unrecoverable framing error, and the alternative to refusing is guessing. A guess
+/// that reads short leaves the remainder in `buffered`, where the next pass through
+/// the read loop answers it as a request of its own — one no client sent.
+///
+/// Duplicates are refused even when they agree. A proxy combining two identical
+/// headers is legal and harmless, but telling that apart from a smuggling attempt
+/// means trusting the pair to match, and a client that wants a body read has no
+/// reason to declare its length twice.
+fn declared_body_length(request: &httparse::Request<'_, '_>) -> Option<usize> {
+    let mut declarations = request
+        .headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("content-length"));
+
+    let declaration = match declarations.next() {
+        Some(declaration) => declaration,
+        None => return Some(0),
+    };
+
+    if declarations.next().is_some() {
+        return None;
+    }
+
+    let value = std::str::from_utf8(declaration.value).ok()?.trim();
+
+    // `1*DIGIT` and nothing else (RFC 9112 §6.2). `parse` alone is too generous: it
+    // accepts `+5`, and a value a proxy joined into `5, 5` has to be refused rather
+    // than read as either number.
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    // Still fallible with every byte a digit: a value longer than `usize` can hold
+    // overflows, and treating that as no body is what the old `unwrap_or(0)` did.
+    value.parse().ok()
 }
 
 /// Whether the client is willing to reuse this connection.
