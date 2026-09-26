@@ -342,15 +342,17 @@ where
             let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
             let mut parsed_request = httparse::Request::new(&mut headers);
 
+            let parse_request_result = parsed_request.parse(buffered);
+
             if parsed_request
                 .headers
                 .iter()
-                .any(|header| header.name.eq_ignore_ascii_case("Transfer-Encoding"))
+                .any(|header| header.name.eq_ignore_ascii_case("transfer-encoding"))
             {
                 return ReadOutcome::Reject(HttpStatus::NotImplemented);
             }
 
-            match parsed_request.parse(buffered) {
+            match parse_request_result {
                 Ok(httparse::Status::Complete(header_len)) => {
                     // Absent, unparseable or duplicated Content-Length is treated as
                     // no body. Chunked transfer encoding is not supported, so such a
