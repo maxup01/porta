@@ -35,8 +35,8 @@ import socket
 import ssl
 import subprocess
 import sys
-import time
 import tempfile
+import time
 from pathlib import Path
 
 # Must match the `#[http_server]` attribute in sample-server's main. The macro
@@ -82,7 +82,9 @@ def check_prerequisites(scripts: list[str]) -> None:
         script = K6_DIR / f"{name}.js"
 
         if not script.is_file():
-            available = sorted(p.stem for p in K6_DIR.glob("*.js") if p.stem != "config")
+            available = sorted(
+                p.stem for p in K6_DIR.glob("*.js") if p.stem != "config"
+            )
             fail(f"no such script: {script.name}. Available: {', '.join(available)}")
 
 
@@ -147,7 +149,9 @@ def wait_until_ready(process: subprocess.Popen, log_path: Path) -> None:
             time.sleep(POLL_INTERVAL_SECONDS)
 
     print(tail(log_path), file=sys.stderr)
-    fail(f"server did not answer on {HOST}:{PORT} within {STARTUP_TIMEOUT_SECONDS:.0f}s")
+    fail(
+        f"server did not answer on {HOST}:{PORT} within {STARTUP_TIMEOUT_SECONDS:.0f}s"
+    )
 
 
 def tail(path: Path, lines: int = 30) -> str:
@@ -156,7 +160,9 @@ def tail(path: Path, lines: int = 30) -> str:
 
     content = path.read_text(errors="replace").splitlines()
 
-    return "\n".join(["", f"  last {lines} lines of {path.name}:", ""] + content[-lines:])
+    return "\n".join(
+        ["", f"  last {lines} lines of {path.name}:", ""] + content[-lines:]
+    )
 
 
 def run_scripts(scripts: list[str]) -> list[str]:
@@ -171,7 +177,9 @@ def run_scripts(scripts: list[str]) -> list[str]:
 
         if result.returncode != 0:
             failed.append(name)
-            print(f"\n  {name}.js exited with code {result.returncode}", file=sys.stderr)
+            print(
+                f"\n  {name}.js exited with code {result.returncode}", file=sys.stderr
+            )
 
     return failed
 
@@ -196,10 +204,16 @@ def stop(process: subprocess.Popen) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("scripts", nargs="*", default=None, help="k6 scripts to run, without .js")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "scripts", nargs="*", default=None, help="k6 scripts to run, without .js"
+    )
     parser.add_argument("--release", action="store_true", help="build optimised")
-    parser.add_argument("--keep-server", action="store_true", help="leave the server running afterwards")
+    parser.add_argument(
+        "--keep-server", action="store_true", help="leave the server running afterwards"
+    )
     args = parser.parse_args()
 
     scripts = args.scripts or DEFAULT_SCRIPTS
@@ -244,7 +258,9 @@ def main() -> int:
             failed = run_scripts(scripts)
         finally:
             if args.keep_server:
-                print(f"\n  leaving server running as pid {process.pid} (--keep-server)")
+                print(
+                    f"\n  leaving server running as pid {process.pid} (--keep-server)"
+                )
                 print(f"  stop it with: kill {process.pid}")
             else:
                 print()
