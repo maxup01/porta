@@ -638,7 +638,8 @@ fn method_tokens(http_method: &Method) -> TokenStream {
 /// - **`String`**: converted directly via `.to_string()`.
 /// - **All other types**: deserialized via `serde_json::from_str`. If the value is not
 ///   already a JSON object (`{...}`), it is wrapped in quotes first to allow
-///   deserialization of string-backed enums and newtypes. Returns 404 on failure.
+///   deserialization of string-backed enums and newtypes. Returns 400 on failure —
+///   unlike the branches above, which answer 404 for the same kind of failure.
 ///
 /// # Arguments
 /// * `fn_args` - Slice of `(Ident, Type)` pairs representing the function parameters.

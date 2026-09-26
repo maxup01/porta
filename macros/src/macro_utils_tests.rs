@@ -217,10 +217,13 @@ fn bool_unknown_value_returns_404() {
 }
 
 #[test]
-fn serde_failure_returns_404() {
+fn serde_failure_returns_400() {
+    // Unlike the numeric and `bool` branches above, which answer 404. The value is
+    // unparseable either way; only the declared Rust type differs, which is why
+    // unifying the two is on the TODO list.
     let f: ItemFn = parse_quote! { async fn h(payload: MyDto) -> String { String::new() } };
     let src = handler_src(f, "/r/{payload}", Method::GET);
-    assert!(src.contains("status_response") && src.contains("NotFound"));
+    assert!(src.contains("status_response") && src.contains("BadRequest"));
 }
 
 #[test]
