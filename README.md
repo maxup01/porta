@@ -104,12 +104,12 @@ That is the entire surface. The crate also re-exports `tokio`, `rustls`, `rcgen`
 
 Each macro takes a required `path` argument and registers the annotated function as a handler for that method and path. Paths support named segments with `{name}` syntax.
 
-| Macro | Method | Example |
-|-------|--------|---------|
-| `#[get(path = "...")]`    | GET    | `#[get(path = "/users/{id}")]` |
-| `#[post(path = "...")]`   | POST   | `#[post(path = "/users")]` |
-| `#[put(path = "...")]`    | PUT    | `#[put(path = "/users/{id}")]` |
-| `#[patch(path = "...")]`  | PATCH  | `#[patch(path = "/users/{id}")]` |
+| Macro                     | Method | Example                           |
+| ------------------------- | ------ | --------------------------------- |
+| `#[get(path = "...")]`    | GET    | `#[get(path = "/users/{id}")]`    |
+| `#[post(path = "...")]`   | POST   | `#[post(path = "/users")]`        |
+| `#[put(path = "...")]`    | PUT    | `#[put(path = "/users/{id}")]`    |
+| `#[patch(path = "...")]`  | PATCH  | `#[patch(path = "/users/{id}")]`  |
 | `#[delete(path = "...")]` | DELETE | `#[delete(path = "/users/{id}")]` |
 
 `HEAD` is not supported. `OPTIONS` has no macro because it is not routed: the server answers it itself, from the route table — see [CORS](#cors).
@@ -124,7 +124,7 @@ Function arguments are filled automatically by name:
 
 An argument marked `#[component]` is exempt from all of the above — it comes from the process, not the request, and is removed before any of these rules are applied. See [Shared state](#shared-state).
 
-Query parameters are merged *after* path parameters, so when both supply a name, the query string wins: `GET /users/7?id=9` binds `id = 9`.
+Query parameters are merged _after_ path parameters, so when both supply a name, the query string wins: `GET /users/7?id=9` binds `id = 9`.
 
 Arguments are deserialized into their declared Rust type:
 
@@ -133,7 +133,7 @@ Arguments are deserialized into their declared Rust type:
 - `String` is taken verbatim.
 - Any other type is deserialized via `serde_json` (so it must derive `Deserialize`). Values that are not already JSON objects are wrapped in quotes first, so string-backed enums and newtypes work — but JSON arrays as a top-level body do not.
 
-A parameter that is **missing** returns `400 Bad Request`. A parameter that is **present but unparseable** returns `404 Not Found`.
+A parameter that is **missing** returns `400 Bad Request`.
 
 Values are taken verbatim: percent-encoding is not decoded, so `/hello/John%20Doe` binds the literal `John%20Doe`.
 
@@ -145,13 +145,13 @@ When several patterns match, the most specific wins — the one with the fewest 
 
 The dispatcher answers in this order:
 
-| Situation | Response |
-|-----------|----------|
-| A handler matches the path and method | the handler's response |
-| The request is `OPTIONS` and the path is served | `204 No Content` + `Allow` |
-| The path is served, but by another method | `405 Method Not Allowed` + `Allow` |
-| No method serves the path | `404 Not Found` |
-| The request line could not be parsed | `400 Bad Request` |
+| Situation                                       | Response                           |
+| ----------------------------------------------- | ---------------------------------- |
+| A handler matches the path and method           | the handler's response             |
+| The request is `OPTIONS` and the path is served | `204 No Content` + `Allow`         |
+| The path is served, but by another method       | `405 Method Not Allowed` + `Allow` |
+| No method serves the path                       | `404 Not Found`                    |
+| The request line could not be parsed            | `400 Bad Request`                  |
 
 `Allow` lists every method that serves the path, plus `OPTIONS`.
 
@@ -178,12 +178,12 @@ A connection serves as many requests as the client wants to send, so a client ma
 
 The connection ends when any of these happens, and the response before it carries `Connection: close`:
 
-| Cause | Bound |
-| --- | --- |
-| The client asked to close | `Connection: close`, or HTTP/1.0 without `Connection: keep-alive` |
-| The client went quiet between requests | 15 seconds |
-| The connection served its budget | 100 requests |
-| A request was refused | `400`, `408`, `413` |
+| Cause                                  | Bound                                                             |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| The client asked to close              | `Connection: close`, or HTTP/1.0 without `Connection: keep-alive` |
+| The client went quiet between requests | 15 seconds                                                        |
+| The connection served its budget       | 100 requests                                                      |
+| A request was refused                  | `400`, `408`, `413`                                               |
 
 A refused request ends the connection because nothing after it can be framed: an oversized body is still arriving, and a request that did not parse has no length to skip past. A `404` or `405` is not a refusal — the request was well-formed, so the connection stays open.
 
@@ -205,11 +205,11 @@ Applied to `main`, this macro generates a complete async server. At startup it:
 async fn main() {}
 ```
 
-| Argument | Type | Required | Meaning |
-|----------|------|----------|---------|
-| `ip` | string literal | yes | address to bind |
-| `port` | integer literal | yes | TCP port to listen on |
-| `allow_origins` | array of string literals | no | origins permitted to call this server from a browser |
+| Argument        | Type                     | Required | Meaning                                              |
+| --------------- | ------------------------ | -------- | ---------------------------------------------------- |
+| `ip`            | string literal           | yes      | address to bind                                      |
+| `port`          | integer literal          | yes      | TCP port to listen on                                |
+| `allow_origins` | array of string literals | no       | origins permitted to call this server from a browser |
 
 The macro must be applied to a function named `main`. A missing required argument, an unknown argument name and a repeated one are all compile errors pointing at the offending token.
 
@@ -300,14 +300,14 @@ fn add(&self, ticket: Ticket) {
 }
 ```
 
-| Rule | Why |
-|------|-----|
-| `name` is required | `TicketStore` → `tickets` has no answer a caller would predict for `HTTPHandler` or `TicketDb` |
-| `name` must be a plain identifier | it becomes a method name, so `"ticket-handler"`, `"1st"` and keywords like `"type"` are rejected at the literal |
-| The struct must implement `Default` | `Default::default()` is what constructs the shared instance |
-| The struct must be `Send + Sync` | one instance is shared by every connection, and connections run concurrently on Tokio's worker threads |
-| The parameter must be `&T` | not `&mut T`, not `T` — every handler holds the same instance |
-| The struct must not be generic | there would be no single type to instantiate |
+| Rule                                | Why                                                                                                             |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `name` is required                  | `TicketStore` → `tickets` has no answer a caller would predict for `HTTPHandler` or `TicketDb`                  |
+| `name` must be a plain identifier   | it becomes a method name, so `"ticket-handler"`, `"1st"` and keywords like `"type"` are rejected at the literal |
+| The struct must implement `Default` | `Default::default()` is what constructs the shared instance                                                     |
+| The struct must be `Send + Sync`    | one instance is shared by every connection, and connections run concurrently on Tokio's worker threads          |
+| The parameter must be `&T`          | not `&mut T`, not `T` — every handler holds the same instance                                                   |
+| The struct must not be generic      | there would be no single type to instantiate                                                                    |
 
 Instances are created on first access, once, and live for the rest of the process. Nothing is constructed for a component no handler ever asks for.
 
@@ -333,19 +333,19 @@ Write `pub(crate) struct TicketStore` and both the type and its accessor reach t
 
 ## Limits
 
-| Limit | Value | Exceeded |
-|-------|-------|----------|
-| Request size (headers + body) | 1 MiB | `413 Payload Too Large` |
-| Request duration | 30 s | `408 Request Timeout` |
-| Idle time between requests | 15 s | connection closed, no response |
-| Requests per connection | 100 | connection closed after the 100th answer |
-| TLS handshake duration | 10 s | connection dropped |
-| Concurrent connections | 512 | client waits in the accept backlog |
-| Headers per request | 32 | `400 Bad Request` |
+| Limit                         | Value | Exceeded                                 |
+| ----------------------------- | ----- | ---------------------------------------- |
+| Request size (headers + body) | 1 MiB | `413 Payload Too Large`                  |
+| Request duration              | 30 s  | `408 Request Timeout`                    |
+| Idle time between requests    | 15 s  | connection closed, no response           |
+| Requests per connection       | 100   | connection closed after the 100th answer |
+| TLS handshake duration        | 10 s  | connection dropped                       |
+| Concurrent connections        | 512   | client waits in the accept backlog       |
+| Headers per request           | 32    | `400 Bad Request`                        |
 
 The request deadline is a single budget shared by the header and body reads, so it cannot be extended by pacing bytes slowly. It starts at the request's first byte, so time a connection spends idle is not charged to the request that follows.
 
-The request-size limit bounds *buffered* bytes rather than strictly one request: a client that pipelines spends the same budget on everything it has sent that has not been answered yet. For a client that waits for each response, the two are the same number.
+The request-size limit bounds _buffered_ bytes rather than strictly one request: a client that pipelines spends the same budget on everything it has sent that has not been answered yet. For a client that waits for each response, the two are the same number.
 
 Peak memory is roughly `connections × 3 × request size` — the request buffer, the copied body and the deserialized value are all live at once — so the size and connection limits are one decision rather than two.
 
@@ -362,7 +362,7 @@ Other constraints worth knowing:
 - **Request bodies must be valid UTF-8.** Binary payloads are rejected with `400 Bad Request`, so files have to be encoded — base64 inside JSON, for instance. There is no `multipart/form-data` support and no streaming; the whole request is buffered in memory.
 - **`Transfer-Encoding: chunked` is not supported.** A chunked request is dispatched with an empty body rather than rejected.
 - **A panicking handler** drops its connection without a response, and takes any requests already pipelined behind it with it.
-- **Handlers are synchronous** and cannot return `Result`. Blocking work inside one occupies a runtime worker, and on a persistent connection it also stalls every later request on that same connection.
+- **Handlers cannot return `Result`.** Blocking work inside one occupies a runtime worker, and on a persistent connection it also stalls every later request on that same connection.
 - A closed connection is followed by an explicit TLS `close_notify`, so peers can distinguish a normal end of stream from a truncated one.
 - Failed TLS handshakes and failed writes do not panic; the connection is dropped and the accept loop continues. Failing to bind the address at startup is fatal.
 - Sustained `accept` failure — file-descriptor exhaustion, say — is logged once at onset and once on recovery with a count, rather than on every retry.
