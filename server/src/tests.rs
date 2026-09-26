@@ -269,6 +269,99 @@ async fn body_that_is_not_utf8_is_rejected_with_400() {
     );
 }
 
+// ── Framing this server cannot honour ────────────────────────────────────────
+
+#[tokio::test]
+async fn a_chunked_request_is_rejected_with_501() {
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"POST /nothing-registered HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n\
+                  2\r\nhi\r\n0\r\n\r\n"
+                    .to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 501 Not Implemented\r\n"),
+        "expected 501: {response}"
+    );
+}
+
+#[tokio::test]
+async fn a_chunked_request_ends_the_connection() {
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"POST /nothing-registered HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n\
+                  0\r\n\r\n"
+                    .to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(response.contains("Connection: close\r\n"), "{response}");
+}
+
+#[tokio::test]
+async fn transfer_encoding_is_recognised_whatever_its_case() {
+    // Header names are case-insensitive on the wire and httparse does not normalise
+    // them, so a lowercase spelling must not slip past the check.
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"POST /nothing-registered HTTP/1.1\r\ntransfer-encoding: Chunked\r\n\r\n\
+                  0\r\n\r\n"
+                    .to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 501 Not Implemented\r\n"),
+        "a lowercase Transfer-Encoding was not recognised: {response}"
+    );
+}
+
+#[tokio::test]
+async fn a_chunked_body_is_not_executed_as_a_smuggled_request() {
+    // The reason this is a 501 rather than an empty body. Framing the request by
+    // `Content-Length` — absent here, so zero — would leave the chunk data in the
+    // buffer, where the next pass through the read loop parses it as a second,
+    // pipelined request. A proxy that understands chunked sees one request; this
+    // server would run two, the second one never written by any client the proxy
+    // vetted.
+    register(Method::GET, "/smuggling/target");
+
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"POST /nothing-registered HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n\
+                  GET /smuggling/target HTTP/1.1\r\nHost: x\r\n\r\n"
+                    .to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 501 Not Implemented\r\n"),
+        "expected 501: {response}"
+    );
+    assert!(
+        !response.contains("200 OK"),
+        "the smuggled request was answered: {response}"
+    );
+}
+
 // ── Deadline ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]
