@@ -269,6 +269,174 @@ async fn body_that_is_not_utf8_is_rejected_with_400() {
     );
 }
 
+// ── Content-Length framing ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn an_absent_content_length_means_no_body() {
+    // The ordinary case, pinned because the framing checks below refuse everything
+    // they cannot read as a single decimal — silence is not one of those.
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![b"POST /nothing-registered HTTP/1.1\r\nHost: x\r\n\r\n".to_vec()],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+        "a request with no body should still reach dispatch: {response}"
+    );
+}
+
+#[tokio::test]
+async fn conflicting_content_length_headers_are_rejected_with_400() {
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello"
+                    .to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "expected 400: {response}"
+    );
+    assert!(response.contains("Connection: close\r\n"), "{response}");
+}
+
+#[tokio::test]
+async fn agreeing_content_length_headers_are_rejected_too() {
+    // Stricter than RFC 9112 §6.3, which only requires refusing values that differ.
+    // Accepting a matching pair means trusting them to match, and this server has
+    // nothing to gain from a length declared twice.
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello"
+                    .to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "expected 400: {response}"
+    );
+}
+
+#[tokio::test]
+async fn a_second_content_length_cannot_smuggle_a_request() {
+    // What the refusal is for. Reading the first declaration — zero — and ignoring
+    // the second left the bytes after the header block in the buffer, where the next
+    // pass answered them as a pipelined request. A proxy that framed the message by
+    // the other declaration forwarded one request; this server ran two.
+    register(Method::GET, "/cl-smuggling/target");
+
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 44\r\n\r\n\
+                  GET /cl-smuggling/target HTTP/1.1\r\nHost: x\r\n\r\n"
+                    .to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "expected 400: {response}"
+    );
+    assert!(
+        !response.contains("200 OK"),
+        "the smuggled request was answered: {response}"
+    );
+}
+
+#[tokio::test]
+async fn a_content_length_that_is_not_a_number_is_rejected_with_400() {
+    // Previously read as no body, which framed the request one byte short of
+    // wherever it actually ended.
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"POST /nothing-registered HTTP/1.1\r\nContent-Length: abc\r\n\r\nhello".to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "expected 400: {response}"
+    );
+}
+
+#[tokio::test]
+async fn a_comma_joined_content_length_is_rejected_with_400() {
+    // One header, two values, because something upstream folded a duplicated pair
+    // into a list. It is the same ambiguity as two headers and gets the same answer.
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 5, 5\r\n\r\nhello".to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "expected 400: {response}"
+    );
+}
+
+#[tokio::test]
+async fn a_signed_content_length_is_rejected_with_400() {
+    // `1*DIGIT` admits no sign, though `"+5".parse::<usize>()` would take it.
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![b"POST /nothing-registered HTTP/1.1\r\nContent-Length: +5\r\n\r\nhello".to_vec()],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "expected 400: {response}"
+    );
+}
+
+#[tokio::test]
+async fn a_content_length_too_large_for_usize_is_rejected_with_400() {
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![
+                b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 999999999999999999999999\r\n\r\n"
+                    .to_vec(),
+            ],
+        )
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+        "expected 400: {response}"
+    );
+}
+
 // ── Framing this server cannot honour ────────────────────────────────────────
 
 #[tokio::test]
