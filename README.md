@@ -367,6 +367,43 @@ Other constraints worth knowing:
 - Failed TLS handshakes and failed writes do not panic; the connection is dropped and the accept loop continues. Failing to bind the address at startup is fatal.
 - Sustained `accept` failure — file-descriptor exhaustion, say — is logged once at onset and once on recovery with a count, rather than on every retry.
 
+## TODO
+
+Known gaps, in rough order of how much they cost a caller. Each one is a deliberate
+absence rather than a surprise — this is the list of what "minimal" currently leaves out.
+
+### Protocol
+
+- [ ] **Decode `Transfer-Encoding: chunked`** instead of refusing it with `501`. Any request framed this way is rejected today; `httparse::parse_chunk_size` is the piece that would make reading one possible.
+- [x] **Reject conflicting `Content-Length` headers.** RFC 9112 §6.3 requires it; two of them currently resolve to the first value, which is a framing decision a client should not get to make twice.
+- [ ] **Answer `HEAD`.** RFC 9110 §9.3.2 requires it wherever `GET` is served, and it comes back `405` today. It would run the `GET` handler and drop the body, the way `OPTIONS` is already answered outside the route tables.
+- [ ] **Percent-decode path and query values**, and treat `+` as a space in query strings. `/hello/John%20Doe` binds the literal `John%20Doe` right now, so every handler would otherwise have to decode for itself.
+- [ ] **Treat method tokens as case-sensitive.** RFC 9110 §9.1 says they are; `Method::from_str` uppercases first while `dispatch`'s `OPTIONS` check compares verbatim, so the two disagree about `options`.
+
+### Newer protocol versions
+
+HTTP/2 and HTTP/3 do not have `Transfer-Encoding` at all. Both replace the text framing
+above with a **binary framing layer** — bodies travel in `DATA` frames and headers are
+compressed (HPACK for HTTP/2, QPACK for HTTP/3), so chunked encoding has nothing left to
+do and is forbidden outright.
+
+- [ ] **Advertise `http/1.1` through ALPN.** No protocol is offered during the handshake today, so agreement on HTTP/1.1 is left implicit.
+- [ ] **HTTP/2** behind ALPN `h2`: binary framing, HPACK, and stream multiplexing, which replaces the one-request-at-a-time read loop with concurrent streams on a single connection.
+- [ ] **HTTP/3** over QUIC afterwards. It is a larger step than h2 — a UDP transport with TLS folded into it, so `rustls` stays but `TcpListener` and `tokio_rustls` do not.
+
+### Behaviour
+
+- [ ] **One status for one failure.** An unparseable parameter answers `404` for numeric and `bool` types but `400` for anything deserialized through `serde_json` — the Rust type decides, which is not something a caller can reason about.
+- [ ] **Catch a handler panic** and answer `500`, rather than dropping the connection with no response. A panic while holding a component's `Mutex` also poisons it for the rest of the process, which needs an answer of its own.
+- [ ] **Let handlers return `Result`**, so an error path does not have to be spelled as a successful `HttpResponse` carrying an error status.
+- [ ] **Accept binary bodies.** The request is handled as a `String` end to end, so uploads have to be base64'd inside JSON; lifting that is also what `multipart/form-data` and streaming would need.
+
+### Configuration
+
+- [ ] **Expose `Limits` through `#[http_server]`.** All seven are compile-time constants, so sizing them to a workload means editing this crate.
+- [ ] **Accept a supplied certificate and key**, instead of only the self-signed pair regenerated at every startup.
+- [ ] **Reach the rest of `CorsConfig` from the attribute** — credentialed requests and an explicit allow-header list are implemented but only `allow_origins` is wired up.
+
 ## Project layout
 
 ```
