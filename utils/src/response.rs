@@ -104,6 +104,7 @@ impl fmt::Display for HttpStatus {
             HttpStatus::UnprocessableEntity => "Unprocessable Entity",
             HttpStatus::TooManyRequests => "Too Many Requests",
             HttpStatus::InternalServerError => "Internal Server Error",
+            HttpStatus::NotImplemented => "Not Implemented",
             HttpStatus::ServiceUnavailable => "Service Unavailable",
             HttpStatus::GatewayTimeout => "Gateway Timeout",
         };
