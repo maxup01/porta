@@ -41,6 +41,7 @@ fn status_numeric_values_are_correct() {
     assert_eq!(HttpStatus::UnprocessableEntity as u32, 422);
     assert_eq!(HttpStatus::TooManyRequests as u32, 429);
     assert_eq!(HttpStatus::InternalServerError as u32, 500);
+    assert_eq!(HttpStatus::NotImplemented as u32, 501);
     assert_eq!(HttpStatus::ServiceUnavailable as u32, 503);
     assert_eq!(HttpStatus::GatewayTimeout as u32, 504);
 }
@@ -64,6 +65,7 @@ fn status_display_reason_phrases_are_correct() {
         (HttpStatus::UnprocessableEntity, "Unprocessable Entity"),
         (HttpStatus::TooManyRequests, "Too Many Requests"),
         (HttpStatus::InternalServerError, "Internal Server Error"),
+        (HttpStatus::NotImplemented, "Not Implemented"),
         (HttpStatus::ServiceUnavailable, "Service Unavailable"),
         (HttpStatus::GatewayTimeout, "Gateway Timeout"),
     ];
