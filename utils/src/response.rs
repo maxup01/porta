@@ -71,6 +71,9 @@ pub enum HttpStatus {
     /// 500 — The server encountered an unexpected condition it could not recover from.
     InternalServerError = 500,
 
+    /// 501 - The server does not support certain protocol or operation.
+    NotImplemented = 501,
+
     /// 503 — The server is not ready to handle the request, often due to maintenance or overload.
     ServiceUnavailable = 503,
 
