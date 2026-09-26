@@ -195,6 +195,7 @@ fn format_all_status_codes_appear_in_status_line() {
         HttpStatus::UnprocessableEntity,
         HttpStatus::TooManyRequests,
         HttpStatus::InternalServerError,
+        HttpStatus::NotImplemented,
         HttpStatus::ServiceUnavailable,
         HttpStatus::GatewayTimeout,
     ];
@@ -298,7 +299,7 @@ fn format_vec_body_serializes_as_json_array() {
 
 /// Every status the enum can express, so a new variant that breaks the
 /// invariants below fails a test rather than reaching the wire.
-const ALL_STATUSES: [HttpStatus; 18] = [
+const ALL_STATUSES: [HttpStatus; 19] = [
     HttpStatus::Ok,
     HttpStatus::Created,
     HttpStatus::Accepted,
@@ -315,19 +316,21 @@ const ALL_STATUSES: [HttpStatus; 18] = [
     HttpStatus::UnprocessableEntity,
     HttpStatus::TooManyRequests,
     HttpStatus::InternalServerError,
+    HttpStatus::NotImplemented,
     HttpStatus::ServiceUnavailable,
     HttpStatus::GatewayTimeout,
 ];
 
-/// The four statuses the server generates on its own, without a handler.
+/// The statuses the server generates on its own, without a handler.
 /// These are the responses previously hand-rolled inside `quote!` blocks and
 /// therefore unreachable from any test.
-const SERVER_GENERATED_STATUSES: [HttpStatus; 5] = [
+const SERVER_GENERATED_STATUSES: [HttpStatus; 6] = [
     HttpStatus::BadRequest,
     HttpStatus::NotFound,
     HttpStatus::MethodNotAllowed,
     HttpStatus::RequestTimeout,
     HttpStatus::PayloadTooLarge,
+    HttpStatus::NotImplemented,
 ];
 
 fn split_message(raw: &str) -> (&str, &str) {
@@ -534,7 +537,10 @@ fn status_response_and_format_response_share_a_header_set() {
 
     for header in ["Content-Type: ", "Content-Length: ", "Date: "] {
         assert!(error.contains(header), "error response missing {header}");
-        assert!(success.contains(header), "success response missing {header}");
+        assert!(
+            success.contains(header),
+            "success response missing {header}"
+        );
     }
 }
 
@@ -561,7 +567,9 @@ fn with_headers_keeps_the_body_and_the_existing_headers() {
     let (_, original_body) = response
         .split_once("\r\n\r\n")
         .expect("no header/body separator");
-    let (_, body) = raw.split_once("\r\n\r\n").expect("no header/body separator");
+    let (_, body) = raw
+        .split_once("\r\n\r\n")
+        .expect("no header/body separator");
 
     assert_eq!(body, original_body);
     assert!(raw.contains("Content-Type: application/json\r\n"));
@@ -591,7 +599,9 @@ fn with_headers_adds_every_header_in_order() {
         ],
     );
 
-    let origin_at = raw.find("Access-Control-Allow-Origin").expect("origin header");
+    let origin_at = raw
+        .find("Access-Control-Allow-Origin")
+        .expect("origin header");
     let vary_at = raw.find("Vary").expect("vary header");
 
     assert!(origin_at < vary_at, "{raw}");
