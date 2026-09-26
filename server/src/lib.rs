@@ -342,6 +342,14 @@ where
             let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
             let mut parsed_request = httparse::Request::new(&mut headers);
 
+            if parsed_request
+                .headers
+                .iter()
+                .any(|header| header.name.eq_ignore_ascii_case("Transfer-Encoding"))
+            {
+                return ReadOutcome::Reject(HttpStatus::NotImplemented);
+            }
+
             match parsed_request.parse(buffered) {
                 Ok(httparse::Status::Complete(header_len)) => {
                     // Absent, unparseable or duplicated Content-Length is treated as
