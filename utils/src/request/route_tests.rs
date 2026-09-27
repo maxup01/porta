@@ -39,6 +39,29 @@ fn method_from_str_unsupported_returns_err() {
     assert!(Method::from_str("").is_err());
 }
 
+// ── advertised_method_names ─────────────────────────────────────────────
+
+#[test]
+fn advertised_methods_add_head_after_get() {
+    assert_eq!(
+        advertised_method_names(&[Method::GET, Method::POST]),
+        vec!["GET", "HEAD", "POST"]
+    );
+}
+
+#[test]
+fn advertised_methods_omit_head_when_get_is_not_served() {
+    assert_eq!(
+        advertised_method_names(&[Method::POST, Method::DELETE]),
+        vec!["POST", "DELETE"]
+    );
+}
+
+#[test]
+fn advertised_methods_of_nothing_is_nothing() {
+    assert!(advertised_method_names(&[]).is_empty());
+}
+
 // ── path_param_segment ──────────────────────────────────────────────────
 
 #[test]

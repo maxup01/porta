@@ -52,21 +52,20 @@ static DELETE_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock:
     Mutex::new(m)
 });
 
-/// Lazily initialized, thread-safe map of HEAD route paths to their handler functions.
-/// Populated at startup via route registration and consulted on each incoming HEAD request.
-static HEAD_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
-    let m = HashMap::new();
-    Mutex::new(m)
-});
-
 /// Enum representing http methods
 ///
 /// These are the *routable* verbs — the ones a handler can be registered for,
-/// and the ones that own a route table. `OPTIONS` is deliberately not among
-/// them: the server answers it itself, from the tables below, rather than
-/// dispatching it to user code. Giving it a variant would mean giving it a
+/// and the ones that own a route table. `OPTIONS` and `HEAD` are deliberately not
+/// among them: the server answers both itself, from the tables below, rather than
+/// dispatching them to user code. Giving either a variant would mean giving it a
 /// table no macro can ever fill, and a `register_route(Method::OPTIONS, ..)`
-/// whose handler would never be reached. See
+/// whose handler would never be reached.
+///
+/// `HEAD` is the subtler of the two. RFC 9110 §9.3.2 defines it as `GET` without the
+/// content, and §9.1 requires it wherever `GET` is served — so it is answered from
+/// `GET_ROUTES` with the body removed. A table of its own would mean a handler per
+/// route, a `405` on every route that forgot one, and nothing stopping a `HEAD`
+/// handler from reporting a different status or length than the `GET` beside it. See
 /// [`extract_method_token_from_request`] for how the verb is recognised before
 /// it is parsed.
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -110,6 +109,26 @@ impl Method {
             Method::DELETE => "DELETE",
         }
     }
+}
+
+/// The verbs to advertise for a path that `allowed_methods` serves.
+///
+/// `HEAD` is inserted wherever `GET` appears, because the server answers it from the
+/// `GET` table whether or not anything registered it. Both `Allow` (RFC 9110 §10.2.1)
+/// and `Access-Control-Allow-Methods` are defined as what the resource supports
+/// rather than what someone happened to register, so both are built from this.
+pub fn advertised_method_names(allowed_methods: &[Method]) -> Vec<&'static str> {
+    let mut names = Vec::with_capacity(allowed_methods.len() + 1);
+
+    for method in allowed_methods {
+        names.push(method.as_str());
+
+        if *method == Method::GET {
+            names.push("HEAD");
+        }
+    }
+
+    names
 }
 
 /// Parses a string slice into an HTTP [`Method`].
