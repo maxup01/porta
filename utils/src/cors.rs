@@ -21,7 +21,7 @@
 //! [simple]: https://developer.mozilla.org/docs/Glossary/CORS-safelisted_request_header
 
 use crate::request::header::get_header;
-use crate::request::route::Method;
+use crate::request::route::{Method, advertised_method_names};
 
 /// How long a browser may cache a preflight result, in seconds.
 ///
@@ -269,11 +269,7 @@ impl CorsConfig {
 
         headers.push((
             "Access-Control-Allow-Methods",
-            allowed_methods
-                .iter()
-                .map(Method::as_str)
-                .collect::<Vec<&str>>()
-                .join(", "),
+            advertised_method_names(allowed_methods).join(", "),
         ));
 
         // Configured list, or whatever was asked for. A preflight that requested
