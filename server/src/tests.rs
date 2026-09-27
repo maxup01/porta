@@ -368,9 +368,7 @@ async fn a_content_length_that_is_not_a_number_is_rejected_with_400() {
     let response = exchange(limits(), |client| {
         send_chunks(
             client,
-            vec![
-                b"POST /nothing-registered HTTP/1.1\r\nContent-Length: abc\r\n\r\nhello".to_vec(),
-            ],
+            vec![b"POST /nothing-registered HTTP/1.1\r\nContent-Length: abc\r\n\r\nhello".to_vec()],
         )
     })
     .await;
@@ -919,9 +917,11 @@ async fn a_405_names_the_methods_that_are_served() {
         response.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"),
         "{response}"
     );
+    // HEAD rides along with GET: the server answers it for anything GET serves, so
+    // `Allow` has to name it whether or not a handler was registered for it.
     assert_eq!(
         header_value(&response, "Allow"),
-        Some("GET, DELETE, OPTIONS")
+        Some("GET, HEAD, DELETE, OPTIONS")
     );
 }
 
@@ -944,7 +944,10 @@ async fn a_plain_options_request_is_answered_with_204_and_allow() {
         response.starts_with("HTTP/1.1 204 No Content\r\n"),
         "{response}"
     );
-    assert_eq!(header_value(&response, "Allow"), Some("GET, POST, OPTIONS"));
+    assert_eq!(
+        header_value(&response, "Allow"),
+        Some("GET, HEAD, POST, OPTIONS")
+    );
 }
 
 #[tokio::test]
@@ -974,6 +977,129 @@ async fn an_options_request_ignores_the_query_string() {
     assert!(
         response.starts_with("HTTP/1.1 204 No Content\r\n"),
         "{response}"
+    );
+}
+
+// ── HEAD ─────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn a_head_request_is_answered_by_the_get_handler() {
+    // No handler is registered for HEAD, and none can be: it has no `Method` and no
+    // table. RFC 9110 §9.1 requires it wherever GET is served, so it comes from the
+    // GET route or not at all.
+    register(Method::GET, "/dispatch-head/items");
+
+    let response = dispatch(
+        "HEAD /dispatch-head/items HTTP/1.1\r\n\r\n",
+        &CorsConfig::disabled(),
+    )
+    .await;
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+}
+
+#[tokio::test]
+async fn a_head_response_has_no_body() {
+    register(Method::GET, "/dispatch-head-empty/items");
+
+    let response = dispatch(
+        "HEAD /dispatch-head-empty/items HTTP/1.1\r\n\r\n",
+        &CorsConfig::disabled(),
+    )
+    .await;
+
+    assert!(
+        response.ends_with("\r\n\r\n"),
+        "a HEAD answer carried content: {response}"
+    );
+}
+
+#[tokio::test]
+async fn a_head_response_reports_the_length_a_get_would_have_sent() {
+    // What a cache or a client checking a size is actually asking for. Recomputing
+    // the length from the absent body would answer 0 and make HEAD useless.
+    register(Method::GET, "/dispatch-head-length/items");
+
+    let from_get = dispatch(
+        "GET /dispatch-head-length/items HTTP/1.1\r\n\r\n",
+        &CorsConfig::disabled(),
+    )
+    .await;
+
+    let from_head = dispatch(
+        "HEAD /dispatch-head-length/items HTTP/1.1\r\n\r\n",
+        &CorsConfig::disabled(),
+    )
+    .await;
+
+    assert_eq!(
+        header_value(&from_head, "Content-Length"),
+        header_value(&from_get, "Content-Length"),
+        "HEAD disagreed with GET about the body's length"
+    );
+    assert_eq!(
+        header_value(&from_head, "Content-Type"),
+        header_value(&from_get, "Content-Type"),
+    );
+}
+
+#[tokio::test]
+async fn a_head_request_for_an_unserved_path_is_a_404_without_a_body() {
+    let response = dispatch(
+        "HEAD /nothing-registered-for-head HTTP/1.1\r\n\r\n",
+        &CorsConfig::disabled(),
+    )
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+        "{response}"
+    );
+    // A generated status loses its body too: the rule belongs to the method, not to
+    // whichever part of the server wrote the answer.
+    assert!(response.ends_with("\r\n\r\n"), "{response}");
+}
+
+#[tokio::test]
+async fn a_head_request_against_a_route_without_get_is_a_405() {
+    // HEAD mirrors GET and nothing else, so a POST-only path does not serve it — and
+    // the `Allow` it comes back with names no HEAD either.
+    register(Method::POST, "/dispatch-head-405/items");
+
+    let response = dispatch(
+        "HEAD /dispatch-head-405/items HTTP/1.1\r\n\r\n",
+        &CorsConfig::disabled(),
+    )
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"),
+        "{response}"
+    );
+    assert_eq!(header_value(&response, "Allow"), Some("POST, OPTIONS"));
+    assert!(response.ends_with("\r\n\r\n"), "{response}");
+}
+
+#[tokio::test]
+async fn a_head_response_reaches_the_wire_without_a_body() {
+    register(Method::GET, "/wire-head/items");
+
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![b"HEAD /wire-head/items HTTP/1.1\r\nHost: x\r\n\r\n".to_vec()],
+        )
+    })
+    .await;
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    assert!(
+        response.contains("Content-Length: 2\r\n"),
+        "the length GET would report was lost: {response}"
+    );
+    assert!(
+        !response.contains("\r\n\r\nOK"),
+        "the body was written after all: {response}"
     );
 }
 
