@@ -52,6 +52,13 @@ static DELETE_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock:
     Mutex::new(m)
 });
 
+/// Lazily initialized, thread-safe map of HEAD route paths to their handler functions.
+/// Populated at startup via route registration and consulted on each incoming HEAD request.
+static HEAD_ROUTES: LazyLock<Mutex<HashMap<String, RouteHandler>>> = LazyLock::new(|| {
+    let m = HashMap::new();
+    Mutex::new(m)
+});
+
 /// Enum representing http methods
 ///
 /// These are the *routable* verbs — the ones a handler can be registered for,
