@@ -53,9 +53,20 @@ fn an_empty_origin_list_is_a_disabled_policy() {
 fn origins_are_split_and_trimmed() {
     let cors = CorsConfig::new(&["  http://a.test ", "http://b.test  "], false, None);
 
-    assert!(!cors.response_headers(&request_from("http://a.test")).is_empty());
-    assert!(!cors.response_headers(&request_from("http://b.test")).is_empty());
-    assert!(cors.response_headers(&request_from("http://c.test")).is_empty());
+    assert!(
+        !cors
+            .response_headers(&request_from("http://a.test"))
+            .is_empty()
+    );
+    assert!(
+        !cors
+            .response_headers(&request_from("http://b.test"))
+            .is_empty()
+    );
+    assert!(
+        cors.response_headers(&request_from("http://c.test"))
+            .is_empty()
+    );
 }
 
 // ── Actual-response headers ──────────────────────────────────────────────────
@@ -65,7 +76,10 @@ fn a_request_without_an_origin_gets_no_headers() {
     // Every non-browser client — curl, the reverse proxy, k6 — lands here.
     let cors = CorsConfig::new(&["*"], false, None);
 
-    assert!(cors.response_headers("GET /users HTTP/1.1\r\n\r\n").is_empty());
+    assert!(
+        cors.response_headers("GET /users HTTP/1.1\r\n\r\n")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -84,7 +98,10 @@ fn a_listed_origin_is_echoed_and_marked_as_varying() {
     let cors = CorsConfig::new(&[ORIGIN], false, None);
     let headers = cors.response_headers(&request_from(ORIGIN));
 
-    assert_eq!(value_of(&headers, "Access-Control-Allow-Origin"), Some(ORIGIN));
+    assert_eq!(
+        value_of(&headers, "Access-Control-Allow-Origin"),
+        Some(ORIGIN)
+    );
     assert_eq!(value_of(&headers, "Vary"), Some("Origin"));
 }
 
@@ -102,7 +119,11 @@ fn an_unlisted_origin_gets_no_headers() {
 fn origin_matching_ignores_case() {
     let cors = CorsConfig::new(&["http://Localhost:1420"], false, None);
 
-    assert!(!cors.response_headers(&request_from("http://localhost:1420")).is_empty());
+    assert!(
+        !cors
+            .response_headers(&request_from("http://localhost:1420"))
+            .is_empty()
+    );
 }
 
 #[test]
@@ -123,7 +144,10 @@ fn a_credentialed_wildcard_echoes_the_origin_instead_of_a_star() {
     let cors = CorsConfig::new(&["*"], true, None);
     let headers = cors.response_headers(&request_from(ORIGIN));
 
-    assert_eq!(value_of(&headers, "Access-Control-Allow-Origin"), Some(ORIGIN));
+    assert_eq!(
+        value_of(&headers, "Access-Control-Allow-Origin"),
+        Some(ORIGIN)
+    );
     assert_eq!(value_of(&headers, "Vary"), Some("Origin"));
 }
 
@@ -156,7 +180,7 @@ fn a_preflight_lists_the_methods_the_path_serves() {
 
     assert_eq!(
         value_of(&headers, "Access-Control-Allow-Methods"),
-        Some("GET, POST")
+        Some("GET, HEAD, POST")
     );
 }
 
@@ -171,7 +195,10 @@ fn a_preflight_for_an_unserved_method_still_lists_what_is_served() {
         .preflight_headers(&preflight_from(ORIGIN, "DELETE", None), &[Method::GET])
         .expect("preflight should be authorised");
 
-    assert_eq!(value_of(&headers, "Access-Control-Allow-Methods"), Some("GET"));
+    assert_eq!(
+        value_of(&headers, "Access-Control-Allow-Methods"),
+        Some("GET, HEAD")
+    );
 }
 
 #[test]
