@@ -14,10 +14,11 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::Instant;
 use utils::cors::{CorsConfig, is_preflight};
 use utils::request::route::{
-    Method, extract_method_from_request, extract_method_token_from_request,
-    extract_path_from_request, get_route_function, methods_for_path,
+    Method, advertised_method_names, extract_method_from_request,
+    extract_method_token_from_request, extract_path_from_request, get_route_function,
+    methods_for_path,
 };
-use utils::response::{HttpStatus, status_response, with_headers};
+use utils::response::{HttpStatus, status_response, with_headers, without_body};
 
 /// Size of a single read from the stream. Requests are assembled from as many of
 /// these as they need.
@@ -225,33 +226,36 @@ pub async fn dispatch(request: &str, cors: &CorsConfig) -> String {
     // is the entire backend for. Falling through to the routing below would answer
     // it `404`, and the request the browser was asking permission for would never
     // be sent.
-    if let Ok(method_token) = extract_method_token_from_request(request)
-        && method_token == "OPTIONS"
-    {
+    let method_token = extract_method_token_from_request(request).ok();
+
+    if method_token == Some("OPTIONS") {
         return options_response(request, path_without_query, cors);
     }
 
-    let route_function = match extract_method_from_request(request) {
-        Ok(method) => get_route_function(path_without_query, method),
-        Err(_) => None,
-    };
+    // `HEAD` is answered here too, and for the same reason: it is not a `Method`, so
+    // nothing can be registered for it. RFC 9110 §9.3.2 makes it `GET` without the
+    // content, so the answer is the `GET` handler's with the body removed — which is
+    // also the only way its `Content-Length` can describe what a `GET` would have
+    // sent. §9.1 requires it wherever `GET` is served, and answering it from the
+    // `GET` table is what makes that true of every route at once.
+    let response = if method_token == Some("HEAD") {
+        let answer = match get_route_function(path_without_query, Method::GET) {
+            Some(route_function) => route_function(request).await,
+            None => unroutable_response(path_without_query),
+        };
 
-    let response = match route_function {
-        Some(route_function) => route_function(request).await,
-        None => {
-            let allowed_methods = methods_for_path(path_without_query);
+        // Generated statuses lose their body as well. The rule is about the method,
+        // not about which part of the server produced the answer.
+        without_body(&answer)
+    } else {
+        let route_function = match extract_method_from_request(request) {
+            Ok(method) => get_route_function(path_without_query, method),
+            Err(_) => None,
+        };
 
-            if allowed_methods.is_empty() {
-                status_response(HttpStatus::NotFound)
-            } else {
-                // Served by some other verb, so this is the wrong method rather
-                // than a missing resource. RFC 9110 §15.5.6 requires the `Allow`
-                // header naming what is served instead.
-                with_headers(
-                    &status_response(HttpStatus::MethodNotAllowed),
-                    &[("Allow", allow_header_value(&allowed_methods))],
-                )
-            }
+        match route_function {
+            Some(route_function) => route_function(request).await,
+            None => unroutable_response(path_without_query),
         }
     };
 
@@ -286,15 +290,35 @@ fn options_response(request: &str, path: &str, cors: &CorsConfig) -> String {
     with_headers(&status_response(HttpStatus::NoContent), &headers)
 }
 
+/// The answer for a request no handler serves: `405` when some other verb serves the
+/// path, `404` when nothing does.
+///
+/// Shared with the `HEAD` path, which resolves against the `GET` table and so arrives
+/// at the same fork when that table has nothing for it.
+fn unroutable_response(path: &str) -> String {
+    let allowed_methods = methods_for_path(path);
+
+    if allowed_methods.is_empty() {
+        status_response(HttpStatus::NotFound)
+    } else {
+        // Served by some other verb, so this is the wrong method rather than a
+        // missing resource. RFC 9110 §15.5.6 requires the `Allow` header naming what
+        // is served instead.
+        with_headers(
+            &status_response(HttpStatus::MethodNotAllowed),
+            &[("Allow", allow_header_value(&allowed_methods))],
+        )
+    }
+}
+
 /// Formats an `Allow` header value from the methods a path serves.
 ///
-/// `OPTIONS` is appended because the server does answer it for every path that
-/// exists, whatever its route table says, and `Allow` is defined as the set the
-/// resource supports rather than the set someone registered.
+/// `OPTIONS` is appended, and `HEAD` alongside `GET`, because the server answers both
+/// for every path that exists whatever its route table says — and `Allow` is defined
+/// as the set the resource supports rather than the set someone registered.
 fn allow_header_value(allowed_methods: &[Method]) -> String {
-    allowed_methods
-        .iter()
-        .map(Method::as_str)
+    advertised_method_names(allowed_methods)
+        .into_iter()
         .chain(std::iter::once("OPTIONS"))
         .collect::<Vec<&str>>()
         .join(", ")
