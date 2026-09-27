@@ -383,6 +383,38 @@ pub fn with_headers(response: &str, headers: &[(&str, String)]) -> String {
     with_headers
 }
 
+/// Strips the body from `response`, keeping its header block intact.
+///
+/// This is what makes a `HEAD` answer out of a `GET` one. RFC 9110 §9.3.2 defines
+/// `HEAD` as `GET` with the content left off, and says the header fields should be
+/// the ones `GET` would have sent — `Content-Length` included. So the length stays as
+/// written and describes a body that is deliberately absent, which is the one place
+/// in HTTP where that is correct rather than a framing bug.
+///
+/// The trailing blank line is kept: it terminates the header block, and a response
+/// without it is unparseable rather than merely empty. A response that has no
+/// separator at all is returned unchanged — there is no body to find, and corrupting
+/// an already-broken message would only hide where it came from.
+///
+/// # Examples
+///
+/// ```rust
+/// use utils::response::{HttpResponse, HttpStatus, format_response, without_body};
+///
+/// let full = format_response(HttpResponse::new("hello".to_string(), HttpStatus::Ok));
+/// let headers_only = without_body(&full);
+///
+/// assert!(headers_only.ends_with("\r\n\r\n"));
+/// assert!(headers_only.contains("Content-Length: 7"));
+/// assert!(!headers_only.contains("hello"));
+/// ```
+pub fn without_body(response: &str) -> String {
+    match response.find("\r\n\r\n") {
+        Some(separator) => response[..separator + 4].to_string(),
+        None => response.to_string(),
+    }
+}
+
 #[cfg(test)]
 #[path = "response_tests.rs"]
 mod tests;

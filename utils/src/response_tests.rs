@@ -544,6 +544,73 @@ fn status_response_and_format_response_share_a_header_set() {
     }
 }
 
+// ── without_body ─────────────────────────────────────────────────────────────
+
+#[test]
+fn without_body_drops_the_body() {
+    let headers_only = without_body(&formatted(simple_body(), HttpStatus::Ok));
+    let (_, body) = split_message(&headers_only);
+
+    assert_eq!(body, "", "the body survived: {headers_only}");
+}
+
+#[test]
+fn without_body_keeps_the_declared_content_length() {
+    // The whole point, and the one place a Content-Length describing an absent body
+    // is correct: a HEAD response reports what a GET would have sent.
+    let full = formatted(simple_body(), HttpStatus::Ok);
+    let headers_only = without_body(&full);
+
+    let (full_headers, body) = split_message(&full);
+    let expected = format!("Content-Length: {}\r\n", body.len());
+
+    assert!(full_headers.contains(&expected), "{full_headers}");
+    assert!(
+        headers_only.contains(&expected),
+        "the length a GET would report was rewritten: {headers_only}"
+    );
+}
+
+#[test]
+fn without_body_keeps_the_status_line_and_headers() {
+    let headers_only = without_body(&formatted(simple_body(), HttpStatus::Created));
+
+    assert!(
+        headers_only.starts_with("HTTP/1.1 201 Created\r\n"),
+        "{headers_only}"
+    );
+    assert!(headers_only.contains("Content-Type: application/json\r\n"));
+    assert!(headers_only.contains("Date: "));
+}
+
+#[test]
+fn without_body_keeps_the_blank_line_that_ends_the_headers() {
+    let headers_only = without_body(&formatted(simple_body(), HttpStatus::Ok));
+
+    assert!(headers_only.ends_with("\r\n\r\n"), "{headers_only}");
+}
+
+#[test]
+fn without_body_is_idempotent() {
+    let once = without_body(&formatted(simple_body(), HttpStatus::Ok));
+    let twice = without_body(&once);
+
+    assert_eq!(once, twice);
+}
+
+#[test]
+fn without_body_leaves_a_204_untouched() {
+    // It never had a body to remove, so HEAD on a route answering 204 is unchanged.
+    let no_content = status_response(HttpStatus::NoContent);
+
+    assert_eq!(without_body(&no_content), no_content);
+}
+
+#[test]
+fn without_body_leaves_a_message_with_no_separator_alone() {
+    assert_eq!(without_body("garbage"), "garbage");
+}
+
 // ── with_headers ─────────────────────────────────────────────────────────────
 
 #[test]
