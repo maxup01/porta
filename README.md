@@ -378,7 +378,7 @@ absence rather than a surprise — this is the list of what "minimal" currently 
 - [x] **Reject conflicting `Content-Length` headers.** RFC 9112 §6.3 requires it; two of them currently resolve to the first value, which is a framing decision a client should not get to make twice.
 - [x] **Answer `HEAD`.** RFC 9110 §9.3.2 requires it wherever `GET` is served, and it comes back `405` today. It would run the `GET` handler and drop the body, the way `OPTIONS` is already answered outside the route tables.
 - [ ] **Percent-decode path and query values**, and treat `+` as a space in query strings. `/hello/John%20Doe` binds the literal `John%20Doe` right now, so every handler would otherwise have to decode for itself.
-- [ ] **Treat method tokens as case-sensitive.** RFC 9110 §9.1 says they are; `Method::from_str` uppercases first while `dispatch`'s `OPTIONS` check compares verbatim, so the two disagree about `options`.
+- [x] **Treat method tokens as case-sensitive.** RFC 9110 §9.1 says they are; `Method::from_str` uppercases first while `dispatch`'s `OPTIONS` check compares verbatim, so the two disagree about `options`.
 
 ### Newer protocol versions
 
