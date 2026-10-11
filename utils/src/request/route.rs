@@ -156,7 +156,7 @@ impl FromStr for Method {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
+        match s {
             "GET" => Ok(Method::GET),
             "POST" => Ok(Method::POST),
             "PUT" => Ok(Method::PUT),
