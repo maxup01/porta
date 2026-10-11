@@ -314,6 +314,8 @@ pub fn http_server(
         panic!("The http_server macro can only be applied to the main function.");
     }
 
+    let limits = limits_expression(&args);
+
     let ip_str = args.ip;
     let port = args.port;
     let allow_origins = args.allow_origins;
@@ -461,7 +463,7 @@ pub fn http_server(
                     // can reach them.
                     ::porta::server::handle_connection(
                         &mut tls_stream,
-                        ::porta::server::Limits::default(),
+                        #limits,
                         &cors
                     ).await;
                 });

@@ -1,4 +1,4 @@
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Literal, Span, TokenStream};
 use quote::{format_ident, quote};
 use regex::Regex;
 use std::{sync::LazyLock, vec::Vec};
@@ -35,6 +35,18 @@ pub struct HttpServerArgs {
     /// Origins permitted to call this server from a browser. Empty means no CORS
     /// headers are emitted at all, which is the default.
     pub allow_origins: Vec<String>,
+
+    /// Ceiling on the bytes buffered for one connection, headers plus body.
+    pub max_request_bytes: Option<u64>,
+
+    /// Budget for delivering one whole request, in seconds.
+    pub request_timeout_secs: Option<u64>,
+
+    /// How long a connection may sit with no request in progress, in seconds.
+    pub idle_timeout_secs: Option<u64>,
+
+    /// How many requests one connection may serve before it is closed.
+    pub max_requests_per_connection: Option<u64>,
 }
 
 impl Parse for HttpServerArgs {
@@ -42,6 +54,10 @@ impl Parse for HttpServerArgs {
         let mut ip: Option<String> = None;
         let mut port: Option<u16> = None;
         let mut allow_origins: Option<Vec<String>> = None;
+        let mut max_request_bytes: Option<u64> = None;
+        let mut request_timeout_secs: Option<u64> = None;
+        let mut idle_timeout_secs: Option<u64> = None;
+        let mut max_requests_per_connection: Option<u64> = None;
 
         while !input.is_empty() {
             let name: Ident = input.parse()?;
@@ -63,11 +79,41 @@ impl Parse for HttpServerArgs {
                         parse_string_array(input)?,
                     )?)
                 }
+                "max_request_bytes" => {
+                    max_request_bytes = Some(parse_once(
+                        &name,
+                        max_request_bytes,
+                        parse_positive(&name, input)?,
+                    )?)
+                }
+                "request_timeout_secs" => {
+                    request_timeout_secs = Some(parse_once(
+                        &name,
+                        request_timeout_secs,
+                        parse_positive(&name, input)?,
+                    )?)
+                }
+                "idle_timeout_secs" => {
+                    idle_timeout_secs = Some(parse_once(
+                        &name,
+                        idle_timeout_secs,
+                        parse_positive(&name, input)?,
+                    )?)
+                }
+                "max_requests_per_connection" => {
+                    max_requests_per_connection = Some(parse_once(
+                        &name,
+                        max_requests_per_connection,
+                        parse_positive(&name, input)?,
+                    )?)
+                }
                 unknown => {
                     return Err(syn::Error::new(
                         name.span(),
                         format!(
-                            "unknown argument `{}`; expected one of `ip`, `port`, `allow_origins`",
+                            "unknown argument `{}`; expected one of `ip`, `port`, \
+                             `allow_origins`, `max_request_bytes`, `request_timeout_secs`, \
+                             `idle_timeout_secs`, `max_requests_per_connection`",
                             unknown
                         ),
                     ));
@@ -86,6 +132,10 @@ impl Parse for HttpServerArgs {
             ip: ip.ok_or_else(|| input.error("`ip` is required, e.g. ip = \"127.0.0.1\""))?,
             port: port.ok_or_else(|| input.error("`port` is required, e.g. port = 8443"))?,
             allow_origins: allow_origins.unwrap_or_default(),
+            max_request_bytes,
+            request_timeout_secs,
+            idle_timeout_secs,
+            max_requests_per_connection,
         })
     }
 }
@@ -228,6 +278,58 @@ fn parse_once<T>(name: &Ident, existing: Option<T>, value: T) -> syn::Result<T> 
         )),
         None => Ok(value),
     }
+}
+
+/// Parses an integer argument that must be greater than zero.
+fn parse_positive(name: &Ident, input: ParseStream) -> syn::Result<u64> {
+    let literal: LitInt = input.parse()?;
+    let value = literal.base10_parse::<u64>()?;
+
+    if value == 0 {
+        return Err(syn::Error::new_spanned(
+            &literal,
+            format!("`{name}` must be greater than zero"),
+        ));
+    }
+
+    Ok(value)
+}
+
+/// Builds the `Limits` expression the generated server passes to `handle_connection`.
+///
+/// Only the fields the attribute named are written; the rest come from
+/// `server::Limits::default()` through struct update syntax, so the defaults keep
+/// living beside the fields they belong to and this crate never restates them. An
+/// attribute that sets nothing emits `Limits { ..Default::default() }`, which is what
+/// the expansion contained before any of this existed.
+pub fn limits_expression(args: &HttpServerArgs) -> TokenStream {
+    let mut fields: Vec<TokenStream> = Vec::new();
+
+    if let Some(bytes) = args.max_request_bytes {
+        let bytes = Literal::u64_unsuffixed(bytes);
+        fields.push(quote! { max_request_bytes: #bytes });
+    }
+
+    if let Some(seconds) = args.request_timeout_secs {
+        let seconds = Literal::u64_unsuffixed(seconds);
+        fields.push(quote! { request_timeout: ::std::time::Duration::from_secs(#seconds) });
+    }
+
+    if let Some(seconds) = args.idle_timeout_secs {
+        let seconds = Literal::u64_unsuffixed(seconds);
+        fields.push(quote! { idle_timeout: ::std::time::Duration::from_secs(#seconds) });
+    }
+
+    if let Some(requests) = args.max_requests_per_connection {
+        let requests = Literal::u64_unsuffixed(requests);
+        fields.push(quote! { max_requests_per_connection: #requests });
+    }
+
+    if fields.len() < 4 {
+        fields.push(quote! { ..::porta::server::Limits::default() });
+    }
+
+    quote! { ::porta::server::Limits { #(#fields),* } }
 }
 
 /// Parses `["a", "b"]` into the strings it contains.
