@@ -357,6 +357,151 @@ fn an_origin_list_of_non_strings_is_an_error() {
     );
 }
 
+// ── HttpServerArgs: limits ──────────────────────────────────────
+
+#[test]
+fn limits_are_absent_unless_named() {
+    // Absent is not zero and not a default restated here: it is `None`, which lets
+    // `limits_expression` leave the field to `server::Limits::default()`.
+    let args = parse_args(r#"ip = "127.0.0.1", port = 8443"#).expect("should parse");
+
+    assert_eq!(args.max_request_bytes, None);
+    assert_eq!(args.request_timeout_secs, None);
+    assert_eq!(args.idle_timeout_secs, None);
+    assert_eq!(args.max_requests_per_connection, None);
+}
+
+#[test]
+fn parses_every_limit() {
+    let args = parse_args(
+        r#"ip = "127.0.0.1", port = 8443, max_request_bytes = 262144,
+           request_timeout_secs = 10, idle_timeout_secs = 5,
+           max_requests_per_connection = 32"#,
+    )
+    .expect("should parse");
+
+    assert_eq!(args.max_request_bytes, Some(262144));
+    assert_eq!(args.request_timeout_secs, Some(10));
+    assert_eq!(args.idle_timeout_secs, Some(5));
+    assert_eq!(args.max_requests_per_connection, Some(32));
+}
+
+#[test]
+fn a_limit_can_be_given_on_its_own() {
+    let args = parse_args(r#"ip = "127.0.0.1", port = 8443, idle_timeout_secs = 60"#)
+        .expect("should parse");
+
+    assert_eq!(args.idle_timeout_secs, Some(60));
+    assert_eq!(args.max_request_bytes, None);
+}
+
+#[test]
+fn a_zero_limit_is_an_error() {
+    // Each is a ceiling, so zero is a server that starts and then answers nothing.
+    for argument in [
+        "max_request_bytes",
+        "request_timeout_secs",
+        "idle_timeout_secs",
+        "max_requests_per_connection",
+    ] {
+        let error = parse_args(&format!(r#"ip = "127.0.0.1", port = 8443, {argument} = 0"#))
+            .expect_err("zero should be rejected");
+
+        assert!(
+            error.to_string().contains("greater than zero"),
+            "unhelpful message for {argument}: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_repeated_limit_is_an_error() {
+    let error = parse_args(
+        r#"ip = "127.0.0.1", port = 8443, idle_timeout_secs = 5, idle_timeout_secs = 9"#,
+    )
+    .expect_err("a repeated limit should be rejected");
+
+    assert!(error.to_string().contains("more than once"), "{error}");
+}
+
+#[test]
+fn a_non_integer_limit_is_an_error() {
+    assert!(parse_args(r#"ip = "127.0.0.1", port = 8443, idle_timeout_secs = "5""#).is_err());
+    assert!(parse_args(r#"ip = "127.0.0.1", port = 8443, max_request_bytes = [1]"#).is_err());
+}
+
+#[test]
+fn the_unknown_argument_message_names_the_limits() {
+    let error = parse_args(r#"ip = "127.0.0.1", port = 8443, request_timeout = 10"#)
+        .expect_err("a near-miss name should be rejected");
+
+    assert!(
+        error.to_string().contains("request_timeout_secs"),
+        "the error should offer the real name: {error}"
+    );
+}
+
+// ── limits_expression ────────────────────────────────────────────────────────
+
+fn limits_for(args: &str) -> String {
+    limits_expression(&parse_args(args).expect("should parse")).to_string()
+}
+
+#[test]
+fn an_unconfigured_server_keeps_every_default() {
+    let expression = limits_for(r#"ip = "127.0.0.1", port = 8443"#);
+
+    assert!(
+        expression.contains("Limits :: default"),
+        "the defaults should still come from `server`: {expression}"
+    );
+    assert!(!expression.contains("max_request_bytes"), "{expression}");
+}
+
+#[test]
+fn a_named_limit_overrides_only_itself() {
+    let expression = limits_for(r#"ip = "127.0.0.1", port = 8443, max_request_bytes = 1024"#);
+
+    assert!(
+        expression.contains("max_request_bytes : 1024"),
+        "{expression}"
+    );
+    // The other three are not restated here, so they stay whatever `server` says.
+    assert!(
+        expression.contains("Limits :: default"),
+        "the untouched fields lost their default: {expression}"
+    );
+    assert!(!expression.contains("idle_timeout"), "{expression}");
+}
+
+#[test]
+fn seconds_become_durations() {
+    let expression = limits_for(r#"ip = "127.0.0.1", port = 8443, request_timeout_secs = 10"#);
+
+    assert!(
+        expression.contains("Duration :: from_secs (10)"),
+        "{expression}"
+    );
+}
+
+#[test]
+fn naming_all_four_drops_the_update_base() {
+    // `..Default::default()` with every field already given is dead syntax, and
+    // `clippy::needless_update` warns by default — in the caller's build, for code
+    // they did not write.
+    let expression = limits_for(
+        r#"ip = "127.0.0.1", port = 8443, max_request_bytes = 1024,
+           request_timeout_secs = 10, idle_timeout_secs = 5,
+           max_requests_per_connection = 32"#,
+    );
+
+    assert!(!expression.contains("default"), "{expression}");
+    assert!(
+        expression.contains("max_requests_per_connection : 32"),
+        "{expression}"
+    );
+}
+
 // ── ComponentArgs ────────────────────────────────────────────────────────────
 
 fn parse_component_args(args: &str) -> syn::Result<ComponentArgs> {
