@@ -6,6 +6,7 @@ use super::*;
 fn method_from_str_uppercase() {
     assert!(matches!(Method::from_str("GET").unwrap(), Method::GET));
     assert!(matches!(Method::from_str("POST").unwrap(), Method::POST));
+    assert!(matches!(Method::from_str("PUT").unwrap(), Method::PUT));
     assert!(matches!(Method::from_str("PATCH").unwrap(), Method::PATCH));
     assert!(matches!(
         Method::from_str("DELETE").unwrap(),
@@ -14,21 +15,26 @@ fn method_from_str_uppercase() {
 }
 
 #[test]
-fn method_from_str_lowercase() {
-    assert!(matches!(Method::from_str("get").unwrap(), Method::GET));
-    assert!(matches!(Method::from_str("post").unwrap(), Method::POST));
-    assert!(matches!(Method::from_str("put").unwrap(), Method::PUT));
-    assert!(matches!(Method::from_str("patch").unwrap(), Method::PATCH));
-    assert!(matches!(
-        Method::from_str("delete").unwrap(),
-        Method::DELETE
-    ));
+fn method_from_str_is_case_sensitive() {
+    for token in ["get", "post", "put", "patch", "delete"] {
+        assert!(
+            Method::from_str(token).is_err(),
+            "lowercase {token} parsed as a method"
+        );
+    }
+
+    for token in ["Get", "pOsT", "Delete"] {
+        assert!(
+            Method::from_str(token).is_err(),
+            "mixed-case {token} parsed as a method"
+        );
+    }
 }
 
 #[test]
-fn method_from_str_mixed_case() {
-    assert!(matches!(Method::from_str("Get").unwrap(), Method::GET));
-    assert!(matches!(Method::from_str("pOsT").unwrap(), Method::POST));
+fn method_from_str_agrees_with_the_tokens_dispatch_compares() {
+    assert!(Method::from_str("head").is_err());
+    assert!(Method::from_str("options").is_err());
 }
 
 #[test]
