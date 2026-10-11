@@ -112,7 +112,7 @@ Each macro takes a required `path` argument and registers the annotated function
 | `#[patch(path = "...")]`  | PATCH  | `#[patch(path = "/users/{id}")]`  |
 | `#[delete(path = "...")]` | DELETE | `#[delete(path = "/users/{id}")]` |
 
-`HEAD` is not supported. `OPTIONS` has no macro because it is not routed: the server answers it itself, from the route table — see [CORS](#cors).
+`HEAD` and `OPTIONS` have no macro because neither is routed: the server answers both itself, from the route table. `OPTIONS` is answered from the table alone — see [CORS](#cors) — while `HEAD` runs the `GET` handler for the path and drops the body, so it is served wherever `GET` is, with no handler of its own to write or forget. Method tokens are matched exactly, as RFC 9110 §9.1 requires: `get` is not a spelling of `GET`.
 
 ### Parameter binding
 
@@ -145,15 +145,18 @@ When several patterns match, the most specific wins — the one with the fewest 
 
 The dispatcher answers in this order:
 
-| Situation                                       | Response                           |
-| ----------------------------------------------- | ---------------------------------- |
-| A handler matches the path and method           | the handler's response             |
-| The request is `OPTIONS` and the path is served | `204 No Content` + `Allow`         |
-| The path is served, but by another method       | `405 Method Not Allowed` + `Allow` |
-| No method serves the path                       | `404 Not Found`                    |
-| The request line could not be parsed            | `400 Bad Request`                  |
+| Situation                                       | Response                                  |
+| ----------------------------------------------- | ----------------------------------------- |
+| A handler matches the path and method           | the handler's response                    |
+| The request is `OPTIONS` and the path is served | `204 No Content` + `Allow`                |
+| The request is `HEAD` and `GET` serves the path | the `GET` response, with the body removed |
+| The path is served, but by another method       | `405 Method Not Allowed` + `Allow`        |
+| No method serves the path                       | `404 Not Found`                           |
+| The request line could not be parsed            | `400 Bad Request`                         |
 
-`Allow` lists every method that serves the path, plus `OPTIONS`.
+`Allow` lists every method that serves the path, plus `OPTIONS`, plus `HEAD` wherever `GET` appears. `Access-Control-Allow-Methods` is built from the same list, so a browser is told the same thing.
+
+A `HEAD` answer keeps the `Content-Length` the `GET` would have sent, describing a body deliberately left off — the one place in HTTP where a length without a body is correct. The rule applies to generated statuses too: a `404` answering a `HEAD` carries no body either.
 
 ## Responses
 
@@ -205,13 +208,31 @@ Applied to `main`, this macro generates a complete async server. At startup it:
 async fn main() {}
 ```
 
-| Argument        | Type                     | Required | Meaning                                              |
-| --------------- | ------------------------ | -------- | ---------------------------------------------------- |
-| `ip`            | string literal           | yes      | address to bind                                      |
-| `port`          | integer literal          | yes      | TCP port to listen on                                |
-| `allow_origins` | array of string literals | no       | origins permitted to call this server from a browser |
+| Argument                      | Type                     | Required | Meaning                                              |
+| ----------------------------- | ------------------------ | -------- | ---------------------------------------------------- |
+| `ip`                          | string literal           | yes      | address to bind                                      |
+| `port`                        | integer literal          | yes      | TCP port to listen on                                |
+| `allow_origins`               | array of string literals | no       | origins permitted to call this server from a browser |
+| `max_request_bytes`           | integer literal          | no       | bytes buffered for one connection, headers plus body |
+| `request_timeout_secs`        | integer literal          | no       | budget for delivering one whole request              |
+| `idle_timeout_secs`           | integer literal          | no       | how long a connection may sit between requests       |
+| `max_requests_per_connection` | integer literal          | no       | how many requests one connection may serve           |
 
 The macro must be applied to a function named `main`. A missing required argument, an unknown argument name and a repeated one are all compile errors pointing at the offending token.
+
+The four limits each default to the matching field of `server::Limits`, and naming one overrides that field alone — nothing restates a limit it does not care about:
+
+```rust
+#[http_server(
+    ip = "127.0.0.1",
+    port = 8443,
+    max_request_bytes = 262144,
+    request_timeout_secs = 10,
+)]
+async fn main() {}
+```
+
+Each must be greater than zero. Zero is a ceiling nothing can satisfy — no bytes buffered, no time elapsed, no request served — so it is refused at the literal rather than producing a server that starts and then answers nothing. See [Limits](#limits) for the defaults and what they cost.
 
 ## CORS
 
@@ -333,15 +354,15 @@ Write `pub(crate) struct TicketStore` and both the type and its accessor reach t
 
 ## Limits
 
-| Limit                         | Value | Exceeded                                 |
-| ----------------------------- | ----- | ---------------------------------------- |
-| Request size (headers + body) | 1 MiB | `413 Payload Too Large`                  |
-| Request duration              | 30 s  | `408 Request Timeout`                    |
-| Idle time between requests    | 15 s  | connection closed, no response           |
-| Requests per connection       | 100   | connection closed after the 100th answer |
-| TLS handshake duration        | 10 s  | connection dropped                       |
-| Concurrent connections        | 512   | client waits in the accept backlog       |
-| Headers per request           | 32    | `400 Bad Request`                        |
+| Limit                         | Default | Exceeded                                 | Configurable                  |
+| ----------------------------- | ------- | ---------------------------------------- | ----------------------------- |
+| Request size (headers + body) | 1 MiB   | `413 Payload Too Large`                  | `max_request_bytes`           |
+| Request duration              | 30 s    | `408 Request Timeout`                    | `request_timeout_secs`        |
+| Idle time between requests    | 15 s    | connection closed, no response           | `idle_timeout_secs`           |
+| Requests per connection       | 100     | connection closed after the 100th answer | `max_requests_per_connection` |
+| TLS handshake duration        | 10 s    | connection dropped                       | no                            |
+| Concurrent connections        | 512     | client waits in the accept backlog       | no                            |
+| Headers per request           | 32      | `400 Bad Request`                        | no                            |
 
 The request deadline is a single budget shared by the header and body reads, so it cannot be extended by pacing bytes slowly. It starts at the request's first byte, so time a connection spends idle is not charged to the request that follows.
 
@@ -349,7 +370,9 @@ The request-size limit bounds _buffered_ bytes rather than strictly one request:
 
 Peak memory is roughly `connections × 3 × request size` — the request buffer, the copied body and the deserialized value are all live at once — so the size and connection limits are one decision rather than two.
 
-These are currently compile-time constants in `server::Limits`; the macro passes `Limits::default()` and does not yet expose them as attribute arguments.
+The first four live in `server::Limits` and are reachable from [`#[http_server]`](#the-http_server-macro) by the names in the last column; the defaults stay in `Limits::default()`, so naming one overrides that field and leaves the rest alone.
+
+The last three are not. The handshake budget and the connection ceiling belong to the accept loop rather than to a connection, and the header cap sizes a stack array — an array length has to be known at compile time, so it cannot vary at run time without allocating per request.
 
 ## Security & limitations
 
@@ -360,7 +383,8 @@ The server is **TLS-only**. Encryption is always on, but the certificate is **se
 Other constraints worth knowing:
 
 - **Request bodies must be valid UTF-8.** Binary payloads are rejected with `400 Bad Request`, so files have to be encoded — base64 inside JSON, for instance. There is no `multipart/form-data` support and no streaming; the whole request is buffered in memory.
-- **`Transfer-Encoding: chunked` is not supported.** A chunked request is dispatched with an empty body rather than rejected.
+- **`Transfer-Encoding: chunked` is not supported.** A chunked request is refused with `501 Not Implemented` and the connection closed. Framing it by `Content-Length` instead — which RFC 9112 §6.3 requires be ignored when this header is present — would leave the chunk data in the buffer, where the next pass through the read loop would answer it as a second request nobody sent.
+- **Ambiguous framing is refused, not guessed at.** A duplicated `Content-Length`, or one that is not a single decimal, is `400 Bad Request` and the connection closes. Agreeing duplicates are refused too: telling them apart from a smuggling attempt means trusting the pair to match, and a client wanting a body read has no reason to declare its length twice.
 - **A panicking handler** drops its connection without a response, and takes any requests already pipelined behind it with it.
 - **Handlers cannot return `Result`.** Blocking work inside one occupies a runtime worker, and on a persistent connection it also stalls every later request on that same connection.
 - A closed connection is followed by an explicit TLS `close_notify`, so peers can distinguish a normal end of stream from a truncated one.
@@ -371,14 +395,17 @@ Other constraints worth knowing:
 
 Known gaps, in rough order of how much they cost a caller. Each one is a deliberate
 absence rather than a surprise — this is the list of what "minimal" currently leaves out.
+Ticked items are done and are kept here for a release or two, because each one changed
+an answer this server used to give.
 
 ### Protocol
 
 - [ ] **Decode `Transfer-Encoding: chunked`** instead of refusing it with `501`. Any request framed this way is rejected today; `httparse::parse_chunk_size` is the piece that would make reading one possible.
-- [x] **Reject conflicting `Content-Length` headers.** RFC 9112 §6.3 requires it; two of them currently resolve to the first value, which is a framing decision a client should not get to make twice.
-- [x] **Answer `HEAD`.** RFC 9110 §9.3.2 requires it wherever `GET` is served, and it comes back `405` today. It would run the `GET` handler and drop the body, the way `OPTIONS` is already answered outside the route tables.
-- [ ] **Percent-decode path and query values**, and treat `+` as a space in query strings. `/hello/John%20Doe` binds the literal `John%20Doe` right now, so every handler would otherwise have to decode for itself.
-- [x] **Treat method tokens as case-sensitive.** RFC 9110 §9.1 says they are; `Method::from_str` uppercases first while `dispatch`'s `OPTIONS` check compares verbatim, so the two disagree about `options`.
+- [x] **Reject conflicting `Content-Length` headers.** RFC 9112 §6.3 requires it. A duplicated or unparseable value is now `400` and the connection closes, instead of the first value winning — which let a request be framed one way by a proxy and another way here.
+- [x] **Answer `HEAD`.** RFC 9110 §9.3.2 requires it wherever `GET` is served, and it used to come back `405`. It now runs the `GET` handler and drops the body, the way `OPTIONS` is answered outside the route tables, so every `GET` route serves it without a handler of its own.
+- [ ] **Percent-decode path and query values**, and treat `+` as a space in query strings. `/hello/John%20Doe` binds the literal `John%20Doe` right now, so every handler would otherwise have to decode for itself. Decoding has to happen _after_ the path and query are split, or an encoded `%2F` or `%26` would forge a segment or a parameter.
+- [x] **Treat method tokens as case-sensitive.** RFC 9110 §9.1 says they are. `Method::from_str` matched case-insensitively while `dispatch` compared `OPTIONS` and `HEAD` verbatim, so `get` was honoured but `head` was not; all three are exact now.
+- [ ] **Answer `501` for a method this server does not implement.** An unrecognised verb currently falls through to `404` or `405`, which says the path is the problem when the method is.
 
 ### Newer protocol versions
 
@@ -400,7 +427,7 @@ do and is forbidden outright.
 
 ### Configuration
 
-- [ ] **Expose `Limits` through `#[http_server]`.** All seven are compile-time constants, so sizing them to a workload means editing this crate.
+- [x] **Expose `Limits` through `#[http_server]`.** All seven are compile-time constants, so sizing them to a workload means editing this crate.
 - [ ] **Accept a supplied certificate and key**, instead of only the self-signed pair regenerated at every startup.
 - [ ] **Reach the rest of `CorsConfig` from the attribute** — credentialed requests and an explicit allow-header list are implemented but only `allow_origins` is wired up.
 
