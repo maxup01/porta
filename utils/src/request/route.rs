@@ -133,11 +133,26 @@ pub fn advertised_method_names(allowed_methods: &[Method]) -> Vec<&'static str> 
 
 /// Parses a string slice into an HTTP [`Method`].
 ///
-/// Matching is case-insensitive, so `"get"`, `"GET"`, and `"Get"` all produce [`Method::GET`].
+/// Matching is exact. RFC 9110 §9.1 makes the method token case-sensitive — it may
+/// be passed to systems whose own method names differ by case — so `"get"` is not a
+/// spelling of `GET` but a method this server does not implement, and it is refused
+/// rather than guessed at.
+///
+/// That makes this agree with the two places in `server::dispatch` that compare the
+/// token before it is parsed, to pick out the verbs answered outside the route
+/// tables. Those comparisons are exact, so accepting a lowercase `get` here while
+/// rejecting a lowercase `head` there would be the same request spelled the same way
+/// and answered two different ways.
+///
+/// A rejected token is not an error the caller reports: the dispatcher resolves no
+/// handler for it and falls through to `405` when some other verb serves the path,
+/// or `404` when none does.
 ///
 /// # Errors
 ///
-/// Returns [`Error::InvalidData`] if the string does not correspond to a supported HTTP method.
+/// Returns [`Error::InvalidData`] if the string is not one of the five routable verbs
+/// exactly as written. `OPTIONS` and `HEAD` are refused too — the server answers both
+/// itself, without a route table. See [`extract_method_token_from_request`].
 ///
 /// # Examples
 ///
@@ -147,8 +162,13 @@ pub fn advertised_method_names(allowed_methods: &[Method]) -> Vec<&'static str> 
 /// let method: Method = "POST".parse().unwrap();
 /// assert_eq!(method, Method::POST);
 ///
-/// let method: Method = "delete".parse().unwrap();
-/// assert_eq!(method, Method::DELETE);
+/// // Case-sensitive: the lowercase spelling is a different token.
+/// assert!("delete".parse::<Method>().is_err());
+/// assert!("Get".parse::<Method>().is_err());
+///
+/// // Answered by the server rather than routed, so neither parses.
+/// assert!("HEAD".parse::<Method>().is_err());
+/// assert!("OPTIONS".parse::<Method>().is_err());
 ///
 /// assert!("CONNECT".parse::<Method>().is_err());
 /// ```
@@ -512,9 +532,9 @@ pub fn extract_method_from_request(request: &str) -> Result<Method, Error> {
 /// through to routing.
 ///
 /// The token is returned verbatim, not upper-cased: HTTP methods are
-/// case-sensitive (RFC 9110 §9.1), so comparisons should be exact. The
-/// case-insensitive matching in [`Method::from_str`] is a leniency this crate
-/// already offers and is left alone.
+/// case-sensitive (RFC 9110 §9.1), so comparisons should be exact — as
+/// [`Method::from_str`] also is, which is what keeps a verb recognised here and a
+/// verb parsed there from disagreeing about the same request.
 ///
 /// # Errors
 ///
