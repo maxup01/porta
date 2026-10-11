@@ -186,9 +186,42 @@ pub fn patch(
 /// - `allow_origins` — optional list of origins permitted to call this server from
 ///   a browser, as an array of string literals (e.g.
 ///   `["http://localhost:1420"]`), or `["*"]` for any origin
+/// - `max_request_bytes` — optional ceiling on the bytes buffered for one
+///   connection, headers plus body
+/// - `request_timeout_secs` — optional budget for delivering one whole request
+/// - `idle_timeout_secs` — optional limit on how long a connection may sit between
+///   requests
+/// - `max_requests_per_connection` — optional limit on how many requests one
+///   connection may serve
 ///
 /// `ip` and `port` are required; omitting either is a compile error, as is an
 /// unrecognised argument name.
+///
+/// The four limits are optional and each defaults to the matching field of
+/// [`server::Limits`], which is where the values and the reasoning behind them live.
+/// Naming one overrides that field alone — the rest keep their defaults — so an
+/// attribute never has to restate a limit it does not care about:
+///
+/// ```ignore
+/// // 256 KiB bodies and a 10-second request budget; idle timeout and the
+/// // per-connection request count are untouched.
+/// #[http_server(
+///     ip = "127.0.0.1",
+///     port = 8443,
+///     max_request_bytes = 262144,
+///     request_timeout_secs = 10,
+/// )]
+/// async fn main() {}
+/// ```
+///
+/// Each must be greater than zero. Zero is a ceiling nothing can satisfy — no bytes
+/// buffered, no time elapsed, no request served — so it is refused at the literal
+/// rather than producing a server that starts and then answers nothing.
+///
+/// Two further ceilings are not reachable this way: the 512-connection limit and the
+/// 10-second TLS handshake budget belong to the accept loop rather than to a
+/// connection, and the 32-header cap sizes a stack array, so it cannot vary at run
+/// time at all.
 ///
 /// # Constraints
 ///
