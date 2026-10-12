@@ -90,3 +90,7 @@ impl<F: Future + Unpin> Future for CatchUnwind<F> {
 pub async fn catch<F: Future + Unpin>(future: F) -> Result<F::Output, PanicPayload> {
     CatchUnwind::new(future).await
 }
+
+#[cfg(test)]
+#[path = "unwind_tests.rs"]
+mod tests;
