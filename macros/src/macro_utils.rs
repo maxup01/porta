@@ -691,7 +691,12 @@ pub fn generate_route_handler_tokens(
 
             #( #deserialized_args )*
 
-            let fn_result = (async move #fn_block ).await;
+            let fn_result = match ::porta::utils::unwind::catch(Box::pin(async move #fn_block)).await {
+                Ok(result) => result,
+                Err(_) => return ::porta::utils::response::status_response(
+                    ::porta::utils::response::HttpStatus::InternalServerError
+                ),
+            };
             ::porta::utils::response::format_response(fn_result)
         }
 
