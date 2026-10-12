@@ -420,7 +420,7 @@ do and is forbidden outright.
 
 ### Behaviour
 
-- [ ] **One status for one failure.** An unparseable parameter answers `404` for numeric and `bool` types but `400` for anything deserialized through `serde_json` — the Rust type decides, which is not something a caller can reason about.
+- [x] **One status for one failure.** An unparseable parameter answers `404` for numeric and `bool` types but `400` for anything deserialized through `serde_json` — the Rust type decides, which is not something a caller can reason about.
 - [ ] **Catch a handler panic** and answer `500`, rather than dropping the connection with no response. A panic while holding a component's `Mutex` also poisons it for the rest of the process, which needs an answer of its own.
 - [ ] **Let handlers return `Result`**, so an error path does not have to be spelled as a successful `HttpResponse` carrying an error status.
 - [ ] **Accept binary bodies.** The request is handled as a `String` end to end, so uploads have to be base64'd inside JSON; lifting that is also what `multipart/form-data` and streaming would need.
