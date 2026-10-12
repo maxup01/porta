@@ -85,10 +85,13 @@ async fn test_get_with_invalid_path_param_returns_404() {
 }
 
 #[tokio::test]
-async fn test_get_with_invalid_query_param_returns_404() {
+async fn test_get_with_invalid_query_param_returns_400() {
+    // `/items` exists and matched without consulting `id`, so an unreadable `id` is
+    // a malformed request rather than a missing resource. Contrast the test above,
+    // where the unreadable value *is* the path segment and so names nothing.
     let response = get_item_by_query("GET /items?id=abc").await;
     eprintln!("{}", response);
-    assert!(response.starts_with(EXPECTED_404_PREFIX));
+    assert!(response.starts_with(EXPECTED_400_PREFIX));
 }
 
 // ── POST ─────────────────────────────────────────────────────────────────────
@@ -209,9 +212,9 @@ async fn test_delete_with_invalid_path_param_returns_404() {
 }
 
 #[tokio::test]
-async fn test_delete_with_invalid_query_param_returns_404() {
+async fn test_delete_with_invalid_query_param_returns_400() {
     let response = delete_item_by_query("DELETE /items?id=abc").await;
-    assert!(response.starts_with(EXPECTED_404_PREFIX));
+    assert!(response.starts_with(EXPECTED_400_PREFIX));
 }
 
 // ── Generated handler error paths ────────────────────────────────────────────

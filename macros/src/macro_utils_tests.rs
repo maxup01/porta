@@ -201,29 +201,69 @@ fn custom_type_wraps_in_quotes_when_not_json_object() {
 // The bytes are `utils::response::status_response`'s responsibility and are
 // covered directly in `response_tests.rs`; all that matters here is that the
 // generated code reaches for the right `HttpStatus` variant.
+// The status a failure gets is decided by where the value came from, never by the
+// type it was declared as — so each of the three branches appears twice below, once
+// bound from the path and once from the query string.
 
 #[test]
-fn numeric_parse_failure_returns_404() {
-    let f: ItemFn = parse_quote! { async fn h(id: u32) -> String { String::new() } };
-    let src = handler_src(f, "/r/{id}", Method::GET);
-    assert!(src.contains("status_response") && src.contains("NotFound"));
+fn an_unparseable_path_param_returns_404() {
+    for (handler, path) in [
+        ("async fn h(id: u32) -> String { String::new() }", "/r/{id}"),
+        (
+            "async fn h(flag: bool) -> String { String::new() }",
+            "/r/{flag}",
+        ),
+        (
+            "async fn h(payload: MyDto) -> String { String::new() }",
+            "/r/{payload}",
+        ),
+    ] {
+        let f: ItemFn = syn::parse_str(handler).unwrap();
+        let src = handler_src(f, path, Method::GET);
+
+        assert!(
+            src.contains("status_response") && src.contains("NotFound"),
+            "a path segment that names nothing should be 404: {path}"
+        );
+    }
 }
 
 #[test]
-fn bool_unknown_value_returns_404() {
-    let f: ItemFn = parse_quote! { async fn h(flag: bool) -> String { String::new() } };
-    let src = handler_src(f, "/r/{flag}", Method::GET);
-    assert!(src.contains("status_response") && src.contains("NotFound"));
+fn an_unparseable_query_param_returns_400() {
+    // The resource exists — the route matched without this value — so the fault is
+    // in the request, not in the URL naming something absent.
+    for handler in [
+        "async fn h(limit: u32) -> String { String::new() }",
+        "async fn h(flag: bool) -> String { String::new() }",
+        "async fn h(sort: MySort) -> String { String::new() }",
+    ] {
+        let f: ItemFn = syn::parse_str(handler).unwrap();
+        let src = handler_src(f, "/r", Method::GET);
+
+        assert!(
+            src.contains("status_response") && src.contains("BadRequest"),
+            "a query parameter is not a missing resource: {handler}"
+        );
+        assert!(
+            !src.contains("NotFound"),
+            "a query parameter should never answer 404: {handler}"
+        );
+    }
 }
 
 #[test]
-fn serde_failure_returns_400() {
-    // Unlike the numeric and `bool` branches above, which answer 404. The value is
-    // unparseable either way; only the declared Rust type differs, which is why
-    // unifying the two is on the TODO list.
-    let f: ItemFn = parse_quote! { async fn h(payload: MyDto) -> String { String::new() } };
-    let src = handler_src(f, "/r/{payload}", Method::GET);
-    assert!(src.contains("status_response") && src.contains("BadRequest"));
+fn the_declared_type_does_not_decide_the_status() {
+    // The bug this replaced: `/r/abc` answered 404 for `u32` and 400 for a type that
+    // went through serde — the same mistake, sorted by something the caller cannot
+    // see. Both are path segments here, so both are 404.
+    let numeric: ItemFn = parse_quote! { async fn h(id: u32) -> String { String::new() } };
+    let serde: ItemFn = parse_quote! { async fn h(id: MyDto) -> String { String::new() } };
+
+    let numeric = handler_src(numeric, "/r/{id}", Method::GET);
+    let serde = handler_src(serde, "/r/{id}", Method::GET);
+
+    assert!(numeric.contains("NotFound"), "{numeric}");
+    assert!(serde.contains("NotFound"), "{serde}");
 }
 
 #[test]
