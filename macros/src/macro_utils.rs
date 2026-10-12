@@ -609,12 +609,12 @@ pub fn generate_route_handler_tokens(
 
     let fn_args = get_input_arg_idents_and_types(&request_args);
 
-    let deserialized_args = generate_deserialization_block(&fn_args);
-
     let component_retrieval_block = generate_components_retrieval_block(&component_args);
 
     let path_params: Vec<String> =
         utils::request::path_param::extract_path_param_names_from_path(path).collect();
+
+    let deserialized_args = generate_deserialization_block(&fn_args, &path_params);
 
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
@@ -735,26 +735,55 @@ fn method_tokens(http_method: &Method) -> TokenStream {
 /// from the `map_with_params` HashMap into its declared Rust type.
 ///
 /// Deserialization strategy per type:
-/// - **Numeric types** (`u8`–`f64`): parsed via `.parse()`, returns 404 on failure.
-/// - **`bool`**: matched against `"true"`, `"1"`, `"false"`, `"0"`, returns 404 otherwise.
-/// - **`String`**: converted directly via `.to_string()`.
+/// - **Numeric types** (`u8`–`f64`): parsed via `.parse()`.
+/// - **`bool`**: matched against `"true"`, `"1"`, `"false"`, `"0"`.
+/// - **`String`**: converted directly via `.to_string()`, which cannot fail.
 /// - **All other types**: deserialized via `serde_json::from_str`. If the value is not
 ///   already a JSON object (`{...}`), it is wrapped in quotes first to allow
-///   deserialization of string-backed enums and newtypes. Returns 400 on failure —
-///   unlike the branches above, which answer 404 for the same kind of failure.
+///   deserialization of string-backed enums and newtypes.
+///
+/// # Which status a failure gets
+///
+/// Where the value came from, not what type it was declared as. A path segment that
+/// will not parse answers `404`, because a URL that cannot name a resource has not
+/// found one: `/users/abc` against `/users/{id}` matched the pattern textually and
+/// named nothing. A query parameter or a body that will not parse answers `400`,
+/// because the resource is fine and the request is malformed.
+///
+/// The type deciding instead was the bug this replaced. `/users/abc` answered `404`
+/// when the handler took a `u64` and `400` when it took an enum — the same mistake by
+/// the same caller, sorted by a Rust type they cannot see, and changing a parameter's
+/// type for internal reasons silently changed the status the API returned.
+///
+/// A **missing** parameter is `400` throughout and is a different failure: nothing
+/// arrived to parse. A path parameter cannot go missing, since the route only matched
+/// because the segment was there.
 ///
 /// # Arguments
 /// * `fn_args` - Slice of `(Ident, Type)` pairs representing the function parameters.
+/// * `path_params` - Names taken from the route pattern, so each argument can be told
+///   apart from one bound out of the query string or the body.
 ///
 /// # Returns
 /// A `Vec<TokenStream>` where each element is a `let` binding that deserializes
 /// one parameter from `map_with_params`.
-fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec<TokenStream> {
+fn generate_deserialization_block(
+    fn_args: &Vec<(syn::Ident, syn::Type)>,
+    path_params: &[String],
+) -> Vec<TokenStream> {
     let mut deserialized = vec![];
 
     for (arg_name, arg_type) in fn_args {
         let arg_str = arg_name.to_string();
         let ty_str = quote!(#arg_type).to_string();
+
+        // The one decision every branch below shares: a path segment that will not
+        // parse named no resource, anything else that will not parse was malformed.
+        let unparseable = if path_params.contains(&arg_str) {
+            quote! { ::porta::utils::response::HttpStatus::NotFound }
+        } else {
+            quote! { ::porta::utils::response::HttpStatus::BadRequest }
+        };
 
         if ty_str == "u8"
             || ty_str == "u16"
@@ -780,9 +809,7 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let #arg_name: #arg_type = match param_val_orig.parse() {
                     Ok(val) => val,
                     Err(_) => {
-                        return ::porta::utils::response::status_response(
-                            ::porta::utils::response::HttpStatus::NotFound
-                        )}
+                        return ::porta::utils::response::status_response(#unparseable)}
                 };
             });
         } else if ty_str == "bool" {
@@ -798,9 +825,7 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                     "true" | "1" => true,
                     "false" | "0" => false,
                     _ => {
-                        return ::porta::utils::response::status_response(
-                            ::porta::utils::response::HttpStatus::NotFound
-                        )}
+                        return ::porta::utils::response::status_response(#unparseable)}
                 };
             });
         } else if ty_str == "String" {
@@ -836,9 +861,7 @@ fn generate_deserialization_block(fn_args: &Vec<(syn::Ident, syn::Type)>) -> Vec
                 let #arg_name: #arg_type = match ::porta::serde_json::from_str(param_val) {
                     Ok(val) => val,
                     Err(_) => {
-                        return ::porta::utils::response::status_response(
-                            ::porta::utils::response::HttpStatus::BadRequest
-                        )}
+                        return ::porta::utils::response::status_response(#unparseable)}
                 };
             });
         }
