@@ -405,7 +405,7 @@ an answer this server used to give.
 - [x] **Answer `HEAD`.** RFC 9110 §9.3.2 requires it wherever `GET` is served, and it used to come back `405`. It now runs the `GET` handler and drops the body, the way `OPTIONS` is answered outside the route tables, so every `GET` route serves it without a handler of its own.
 - [ ] **Percent-decode path and query values**, and treat `+` as a space in query strings. `/hello/John%20Doe` binds the literal `John%20Doe` right now, so every handler would otherwise have to decode for itself. Decoding has to happen _after_ the path and query are split, or an encoded `%2F` or `%26` would forge a segment or a parameter.
 - [x] **Treat method tokens as case-sensitive.** RFC 9110 §9.1 says they are. `Method::from_str` matched case-insensitively while `dispatch` compared `OPTIONS` and `HEAD` verbatim, so `get` was honoured but `head` was not; all three are exact now.
-- [ ] **Answer `501` for a method this server does not implement.** An unrecognised verb currently falls through to `404` or `405`, which says the path is the problem when the method is.
+- [x] **Answer `501` for a method this server does not implement.** An unrecognised verb currently falls through to `404` or `405`, which says the path is the problem when the method is.
 
 ### Newer protocol versions
 
