@@ -885,11 +885,75 @@ async fn dispatch_answers_a_malformed_request_line_with_400() {
 }
 
 #[tokio::test]
-async fn dispatch_answers_an_unsupported_verb_with_404_when_nothing_serves_the_path() {
-    // CONNECT does not parse as a Method, so no handler resolves; with no route
-    // registered for the path either, that is a 404 rather than a 405.
+async fn dispatch_answers_an_unimplemented_verb_with_501() {
+    // CONNECT is not a `Method` and never will be, so this server implements it for
+    // no resource at all — RFC 9110 §15.6.2's definition of 501. Answering 404 would
+    // blame the path for a fault in the method.
     let response = dispatch(
         "CONNECT /nothing-registered HTTP/1.1\r\n\r\n",
+        &CorsConfig::disabled(),
+    )
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 501 Not Implemented\r\n"),
+        "{response}"
+    );
+}
+
+#[tokio::test]
+async fn an_unimplemented_verb_is_501_even_where_the_path_is_served() {
+    register(Method::GET, "/dispatch-501/items");
+
+    let response = dispatch(
+        "TRACE /dispatch-501/items HTTP/1.1\r\n\r\n",
+        &CorsConfig::disabled(),
+    )
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 501 Not Implemented\r\n"),
+        "{response}"
+    );
+}
+
+#[tokio::test]
+async fn a_lowercase_verb_is_501() {
+    register(Method::GET, "/dispatch-501-case/items");
+
+    let response = dispatch(
+        "get /dispatch-501-case/items HTTP/1.1\r\n\r\n",
+        &CorsConfig::disabled(),
+    )
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 501 Not Implemented\r\n"),
+        "{response}"
+    );
+}
+
+#[tokio::test]
+async fn an_implemented_verb_with_no_route_is_still_405() {
+    register(Method::GET, "/dispatch-501-405/items");
+
+    let response = dispatch(
+        "POST /dispatch-501-405/items HTTP/1.1\r\n\r\n",
+        &CorsConfig::disabled(),
+    )
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"),
+        "{response}"
+    );
+    assert_eq!(header_value(&response, "Allow"), Some("GET, HEAD, OPTIONS"));
+}
+
+#[tokio::test]
+async fn an_implemented_verb_on_an_unserved_path_is_still_404() {
+    let response = dispatch(
+        "DELETE /nothing-registered-at-all HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
