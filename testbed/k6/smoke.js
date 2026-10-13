@@ -249,8 +249,8 @@ export default function() {
 
         check(capabilities, {
                 "plain OPTIONS is answered with 204": (r) => r.status === 204,
-                "plain OPTIONS lists every method and OPTIONS": (r) =>
-                        r.headers["Allow"] === "GET, PUT, PATCH, DELETE, OPTIONS",
+                "plain OPTIONS lists every method, HEAD and OPTIONS": (r) =>
+                        r.headers["Allow"] === "GET, HEAD, PUT, PATCH, DELETE, OPTIONS",
         });
 }
 
