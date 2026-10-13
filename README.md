@@ -443,7 +443,3 @@ do and is forbidden outright.
 ```
 
 `server` exists as its own crate rather than as code inside `#[http_server]`'s expansion so that the read loop, the limits and the dispatch decision are ordinary functions this workspace can test. It is generic over `AsyncRead + AsyncWrite`, so tests drive it over an in-memory pipe while the macro passes a TLS stream.
-
-## License
-
-See [LICENSE](./LICENSE).
