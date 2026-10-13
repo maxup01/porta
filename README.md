@@ -428,7 +428,7 @@ do and is forbidden outright.
 
 - [x] **Expose `Limits` through `#[http_server]`.** All seven are compile-time constants, so sizing them to a workload means editing this crate.
 - [ ] **Accept a supplied certificate and key**, instead of only the self-signed pair regenerated at every startup.
-- [ ] **Reach the rest of `CorsConfig` from the attribute** — credentialed requests and an explicit allow-header list are implemented but only `allow_origins` is wired up.
+- [x] **Reach the rest of `CorsConfig` from the attribute** — credentialed requests and an explicit allow-header list are implemented but only `allow_origins` is wired up.
 
 ## Project layout
 
