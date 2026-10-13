@@ -135,6 +135,16 @@ Arguments are deserialized into their declared Rust type:
 
 A parameter that is **missing** returns `400 Bad Request`.
 
+A parameter that is present but **cannot be read as its declared type** is answered by where the value came from, never by which type that was:
+
+| The value came from | Answer            | Why                                                                                    |
+| ------------------- | ----------------- | -------------------------------------------------------------------------------------- |
+| a path segment      | `404 Not Found`   | `/users/abc` against `/users/{id}` matched the pattern textually and names no resource |
+| a query parameter   | `400 Bad Request` | the route matched without it, so the resource is fine and the request is not           |
+| the request body    | `400 Bad Request` | likewise                                                                               |
+
+The type is deliberately not part of the decision: `id: u64` and a newtype deriving `Deserialize` are the same mistake by the same caller, and sorting them by something a client cannot see would make the status change when a handler's signature does.
+
 Values are taken verbatim: percent-encoding is not decoded, so `/hello/John%20Doe` binds the literal `John%20Doe`.
 
 ### Route resolution
@@ -150,9 +160,12 @@ The dispatcher answers in this order:
 | A handler matches the path and method           | the handler's response                    |
 | The request is `OPTIONS` and the path is served | `204 No Content` + `Allow`                |
 | The request is `HEAD` and `GET` serves the path | the `GET` response, with the body removed |
+| The verb is not one this server implements      | `501 Not Implemented`                     |
 | The path is served, but by another method       | `405 Method Not Allowed` + `Allow`        |
 | No method serves the path                       | `404 Not Found`                           |
 | The request line could not be parsed            | `400 Bad Request`                         |
+
+The `501` row comes before the other two deliberately. `TRACE`, `CONNECT` and `get` are verbs this server implements for no resource at all, which is what RFC 9110 §15.6.2 reserves `501` for; answering `405` would claim the method is merely wrong _here_, and `404` would blame the path for a fault in the method. The path is not even consulted. A verb that _is_ implemented but serves no handler on this path is still a `405`, and still carries `Allow`.
 
 `Allow` lists every method that serves the path, plus `OPTIONS`, plus `HEAD` wherever `GET` appears. `Access-Control-Allow-Methods` is built from the same list, so a browser is told the same thing.
 
@@ -208,15 +221,17 @@ Applied to `main`, this macro generates a complete async server. At startup it:
 async fn main() {}
 ```
 
-| Argument                      | Type                     | Required | Meaning                                              |
-| ----------------------------- | ------------------------ | -------- | ---------------------------------------------------- |
-| `ip`                          | string literal           | yes      | address to bind                                      |
-| `port`                        | integer literal          | yes      | TCP port to listen on                                |
-| `allow_origins`               | array of string literals | no       | origins permitted to call this server from a browser |
-| `max_request_bytes`           | integer literal          | no       | bytes buffered for one connection, headers plus body |
-| `request_timeout_secs`        | integer literal          | no       | budget for delivering one whole request              |
-| `idle_timeout_secs`           | integer literal          | no       | how long a connection may sit between requests       |
-| `max_requests_per_connection` | integer literal          | no       | how many requests one connection may serve           |
+| Argument                      | Type                     | Required | Meaning                                                         |
+| ----------------------------- | ------------------------ | -------- | --------------------------------------------------------------- |
+| `ip`                          | string literal           | yes      | address to bind                                                 |
+| `port`                        | integer literal          | yes      | TCP port to listen on                                           |
+| `allow_origins`               | array of string literals | no       | origins permitted to call this server from a browser            |
+| `allow_credentials`           | boolean literal          | no       | whether cookies and `Authorization` may cross origins           |
+| `allow_headers`               | array of string literals | no       | headers a preflight may request; omitted, the request is echoed |
+| `max_request_bytes`           | integer literal          | no       | bytes buffered for one connection, headers plus body            |
+| `request_timeout_secs`        | integer literal          | no       | budget for delivering one whole request                         |
+| `idle_timeout_secs`           | integer literal          | no       | how long a connection may sit between requests                  |
+| `max_requests_per_connection` | integer literal          | no       | how many requests one connection may serve                      |
 
 The macro must be applied to a function named `main`. A missing required argument, an unknown argument name and a repeated one are all compile errors pointing at the offending token.
 
@@ -270,7 +285,41 @@ Access-Control-Max-Age: 600
 
 An origin that is not listed gets a truthful answer with no CORS headers on it, which is how a browser is told no. `Vary: Origin` accompanies any echoed origin so a shared cache cannot serve one origin's permission slip to another.
 
-Credentialed requests (cookies, `Authorization`) are not enabled through this attribute. `utils::cors::CorsConfig` supports them along with an explicit allow-header list; only the origin list is currently reachable from `#[http_server]`.
+### Credentials
+
+By default a browser sends a cross-origin request **without** cookies or an `Authorization` header, and retains the response from the script even when one arrives. A session that works same-origin therefore stops working the moment the page moves to another origin. `allow_credentials` is what turns it back on:
+
+```rust
+#[http_server(
+    ip = "127.0.0.1",
+    port = 8443,
+    allow_origins = ["http://localhost:1420"],
+    allow_credentials = true
+)]
+async fn main() {}
+```
+
+Every answer to a listed origin then carries `Access-Control-Allow-Credentials: true`, and the browser sends and exposes credentials.
+
+**It cannot be combined with `allow_origins = ["*"]`, and that combination is a compile error.** The reason is worth stating, because the two appear to work together: a browser rejects `Access-Control-Allow-Origin: *` on a credentialed response, so a server that wants both has to echo the caller's origin back instead — which this one would do. The result is a server that answers _every_ origin's credentialed request successfully, meaning any page on the internet can act as whoever is logged in. Naming the origins is the only safe way to allow credentials, so the attribute refuses the pair rather than documenting the hazard.
+
+### Allowed headers
+
+A preflight asks permission for the headers it intends to send, in `Access-Control-Request-Headers`. With nothing configured the server **echoes that list back**, which grants whatever was asked — fine for a backend whose own frontend is the only caller, and a rubber stamp otherwise. `allow_headers` replaces the echo with a fixed answer:
+
+```rust
+#[http_server(
+    ip = "127.0.0.1",
+    port = 8443,
+    allow_origins = ["http://localhost:1420"],
+    allow_headers = ["content-type", "authorization"]
+)]
+async fn main() {}
+```
+
+A preflight asking for `x-admin-token` now comes back listing only `content-type, authorization`, and the browser blocks the real request before it is sent. An empty list, `allow_headers = []`, is a policy that permits no headers at all — which is not the same as omitting the argument.
+
+Neither argument turns CORS on by itself. `allow_origins` decides that; with no origins listed the policy is disabled and the other two describe something that is never consulted.
 
 [simple]: https://developer.mozilla.org/docs/Glossary/CORS-safelisted_request_header
 
