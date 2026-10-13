@@ -248,14 +248,12 @@ pub async fn dispatch(request: &str, cors: &CorsConfig) -> String {
         // not about which part of the server produced the answer.
         without_body(&answer)
     } else {
-        let route_function = match extract_method_from_request(request) {
-            Ok(method) => get_route_function(path_without_query, method),
-            Err(_) => None,
-        };
-
-        match route_function {
-            Some(route_function) => route_function(request).await,
-            None => unroutable_response(path_without_query),
+        match extract_method_from_request(request) {
+            Ok(method) => match get_route_function(path_without_query, method) {
+                Some(route_function) => route_function(request).await,
+                None => unroutable_response(path_without_query),
+            },
+            Err(_) => status_response(HttpStatus::NotImplemented),
         }
     };
 
