@@ -481,6 +481,105 @@ fn the_unknown_argument_message_names_the_limits() {
     );
 }
 
+// ── HttpServerArgs: the rest of the CORS policy ──────────────────────────────
+
+#[test]
+fn credentials_are_off_and_headers_are_echoed_unless_named() {
+    let args = parse_args(r#"ip = "127.0.0.1", port = 8443"#).expect("should parse");
+
+    assert!(!args.allow_credentials);
+    assert_eq!(args.allow_headers, None);
+}
+
+#[test]
+fn parses_credentials_and_an_allow_header_list() {
+    let args = parse_args(
+        r#"ip = "127.0.0.1", port = 8443, allow_origins = ["http://a.test"],
+           allow_credentials = true, allow_headers = ["content-type", "authorization"]"#,
+    )
+    .expect("should parse");
+
+    assert!(args.allow_credentials);
+    assert_eq!(
+        args.allow_headers,
+        Some(vec![
+            "content-type".to_string(),
+            "authorization".to_string()
+        ])
+    );
+}
+
+#[test]
+fn an_empty_allow_header_list_is_not_the_same_as_omitting_it() {
+    let args =
+        parse_args(r#"ip = "127.0.0.1", port = 8443, allow_headers = []"#).expect("should parse");
+
+    assert_eq!(args.allow_headers, Some(vec![]));
+}
+
+#[test]
+fn credentials_with_a_wildcard_origin_is_an_error() {
+    let error = parse_args(
+        r#"ip = "127.0.0.1", port = 8443, allow_origins = ["*"], allow_credentials = true"#,
+    )
+    .expect_err("the combination should be rejected");
+
+    assert!(
+        error.to_string().contains("allow_credentials"),
+        "the error should name the argument: {error}"
+    );
+}
+
+#[test]
+fn credentials_with_named_origins_is_fine() {
+    assert!(
+        parse_args(
+            r#"ip = "127.0.0.1", port = 8443, allow_origins = ["http://a.test"],
+               allow_credentials = true"#
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn a_wildcard_without_credentials_is_fine() {
+    assert!(parse_args(r#"ip = "127.0.0.1", port = 8443, allow_origins = ["*"]"#).is_ok());
+}
+
+#[test]
+fn a_non_boolean_credentials_value_is_an_error() {
+    assert!(parse_args(r#"ip = "127.0.0.1", port = 8443, allow_credentials = 1"#).is_err());
+    assert!(parse_args(r#"ip = "127.0.0.1", port = 8443, allow_credentials = "true""#).is_err());
+}
+
+// ── cors_expression ──────────────────────────────────────────────────────────
+
+fn cors_for(args: &str) -> String {
+    cors_expression(&parse_args(args).expect("should parse")).to_string()
+}
+
+#[test]
+fn an_unconfigured_policy_allows_nothing_and_echoes_headers() {
+    let expression = cors_for(r#"ip = "127.0.0.1", port = 8443"#);
+
+    assert!(expression.contains("CorsConfig :: new"), "{expression}");
+    assert!(expression.contains("false"), "{expression}");
+    assert!(expression.contains("None"), "{expression}");
+}
+
+#[test]
+fn the_policy_carries_every_argument_through() {
+    let expression = cors_for(
+        r#"ip = "127.0.0.1", port = 8443, allow_origins = ["http://a.test"],
+           allow_credentials = true, allow_headers = ["content-type"]"#,
+    );
+
+    assert!(expression.contains("\"http://a.test\""), "{expression}");
+    assert!(expression.contains("true"), "{expression}");
+    assert!(expression.contains("Some"), "{expression}");
+    assert!(expression.contains("\"content-type\""), "{expression}");
+}
+
 // ── limits_expression ────────────────────────────────────────────────────────
 
 fn limits_for(args: &str) -> String {
