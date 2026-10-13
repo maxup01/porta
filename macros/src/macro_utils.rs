@@ -3,8 +3,8 @@ use quote::{format_ident, quote};
 use regex::Regex;
 use std::{sync::LazyLock, vec::Vec};
 use syn::{
-    FnArg, Ident, ItemFn, ItemStruct, Lit, LitInt, LitStr, Meta, NestedMeta, Pat, PatType, Token,
-    bracketed,
+    FnArg, Ident, ItemFn, ItemStruct, Lit, LitBool, LitInt, LitStr, Meta, NestedMeta, Pat, PatType,
+    Token, bracketed,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     token::Comma,
@@ -36,6 +36,14 @@ pub struct HttpServerArgs {
     /// headers are emitted at all, which is the default.
     pub allow_origins: Vec<String>,
 
+    /// Whether a browser may send cookies and `Authorization` cross-origin, and
+    /// read the answer afterwards.
+    pub allow_credentials: bool,
+
+    /// The headers a preflight is permitted to request. `None` echoes whatever the
+    /// preflight asked for, which is what a server with no list configured does.
+    pub allow_headers: Option<Vec<String>>,
+
     /// Ceiling on the bytes buffered for one connection, headers plus body.
     pub max_request_bytes: Option<u64>,
 
@@ -58,6 +66,10 @@ impl Parse for HttpServerArgs {
         let mut request_timeout_secs: Option<u64> = None;
         let mut idle_timeout_secs: Option<u64> = None;
         let mut max_requests_per_connection: Option<u64> = None;
+        let mut allow_credentials: Option<bool> = None;
+        let mut allow_headers: Option<Vec<String>> = None;
+
+        let mut credentials_literal: Option<LitBool> = None;
 
         while !input.is_empty() {
             let name: Ident = input.parse()?;
@@ -76,6 +88,20 @@ impl Parse for HttpServerArgs {
                     allow_origins = Some(parse_once(
                         &name,
                         allow_origins,
+                        parse_string_array(input)?,
+                    )?)
+                }
+                "allow_credentials" => {
+                    let literal: LitBool = input.parse()?;
+                    let value = literal.value;
+
+                    credentials_literal = Some(literal);
+                    allow_credentials = Some(parse_once(&name, allow_credentials, value)?);
+                }
+                "allow_headers" => {
+                    allow_headers = Some(parse_once(
+                        &name,
+                        allow_headers,
                         parse_string_array(input)?,
                     )?)
                 }
@@ -112,7 +138,8 @@ impl Parse for HttpServerArgs {
                         name.span(),
                         format!(
                             "unknown argument `{}`; expected one of `ip`, `port`, \
-                             `allow_origins`, `max_request_bytes`, `request_timeout_secs`, \
+                             `allow_origins`, `allow_credentials`, `allow_headers`, \
+                             `max_request_bytes`, `request_timeout_secs`, \
                              `idle_timeout_secs`, `max_requests_per_connection`",
                             unknown
                         ),
@@ -128,10 +155,27 @@ impl Parse for HttpServerArgs {
             input.parse::<Token![,]>()?;
         }
 
+        let allow_credentials = allow_credentials.unwrap_or(false);
+        let allow_origins = allow_origins.unwrap_or_default();
+
+        if allow_credentials && allow_origins.iter().any(|origin| origin.trim() == "*") {
+            let message = "`allow_credentials = true` cannot be combined with \
+                           `allow_origins = [\"*\"]`: the origin is echoed back when \
+                           credentials are allowed, so every origin would be permitted \
+                           to make authenticated requests. Name the origins instead.";
+
+            return Err(match credentials_literal {
+                Some(literal) => syn::Error::new_spanned(literal, message),
+                None => input.error(message),
+            });
+        }
+
         Ok(HttpServerArgs {
             ip: ip.ok_or_else(|| input.error("`ip` is required, e.g. ip = \"127.0.0.1\""))?,
             port: port.ok_or_else(|| input.error("`port` is required, e.g. port = 8443"))?,
-            allow_origins: allow_origins.unwrap_or_default(),
+            allow_origins,
+            allow_credentials,
+            allow_headers,
             max_request_bytes,
             request_timeout_secs,
             idle_timeout_secs,
@@ -330,6 +374,34 @@ pub fn limits_expression(args: &HttpServerArgs) -> TokenStream {
     }
 
     quote! { ::porta::server::Limits { #(#fields),* } }
+}
+
+/// Builds the `CorsConfig` expression the generated server shares across connections.
+///
+/// All three of the policy's settings come from the attribute. `allow_origins` alone
+/// decides whether CORS is on at all — an empty list disables it, and the other two
+/// then describe a policy that is never consulted.
+pub fn cors_expression(args: &HttpServerArgs) -> TokenStream {
+    let allow_origins = &args.allow_origins;
+    let allow_credentials = args.allow_credentials;
+
+    // `None` is not an empty list: it tells `CorsConfig` to echo whatever headers the
+    // preflight asked for, which is what a server with nothing configured does. An
+    // empty list is a policy that permits no headers at all.
+    let allow_headers = match &args.allow_headers {
+        Some(allow_headers) => quote! {
+            ::std::option::Option::Some(&[#(#allow_headers),*])
+        },
+        None => quote! { ::std::option::Option::None },
+    };
+
+    quote! {
+        ::porta::utils::cors::CorsConfig::new(
+            &[#(#allow_origins),*],
+            #allow_credentials,
+            #allow_headers,
+        )
+    }
 }
 
 /// Parses `["a", "b"]` into the strings it contains.

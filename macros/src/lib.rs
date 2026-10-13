@@ -186,6 +186,13 @@ pub fn patch(
 /// - `allow_origins` — optional list of origins permitted to call this server from
 ///   a browser, as an array of string literals (e.g.
 ///   `["http://localhost:1420"]`), or `["*"]` for any origin
+/// - `allow_credentials` — optional boolean literal; whether a browser may send
+///   cookies and `Authorization` cross-origin and read the answer. Cannot be
+///   combined with `allow_origins = ["*"]`, which would let every origin on the
+///   internet make authenticated requests
+/// - `allow_headers` — optional array of string literals naming the headers a
+///   preflight may request. Omitted, the preflight's own
+///   `Access-Control-Request-Headers` is echoed back, which grants whatever was asked
 /// - `max_request_bytes` — optional ceiling on the bytes buffered for one
 ///   connection, headers plus body
 /// - `request_timeout_secs` — optional budget for delivering one whole request
@@ -348,10 +355,10 @@ pub fn http_server(
     }
 
     let limits = limits_expression(&args);
+    let cors = cors_expression(&args);
 
     let ip_str = args.ip;
     let port = args.port;
-    let allow_origins = args.allow_origins;
 
     let expanded = quote! {
         #[derive(Default)]
@@ -393,11 +400,7 @@ pub fn http_server(
             // than a copy of the origin list. An empty list yields a disabled
             // policy, which adds no header to anything.
             let cors = ::std::sync::Arc::new(
-                ::porta::utils::cors::CorsConfig::new(
-                    &[#(#allow_origins),*],
-                    false,
-                    ::std::option::Option::None,
-                )
+                #cors
             );
 
             let addr = format!("{}:{}", #ip_str, #port);
