@@ -39,12 +39,13 @@ use std::collections::HashMap;
 ///
 /// # Caveats
 ///
-/// - Values are taken verbatim; percent-decoding is left to the caller.
+/// - `+` is read as a space; percent-decoding is left to the caller.
 /// - Duplicate keys are silently collapsed — the last occurrence wins.
 pub fn extract_params(url: &str) -> Option<HashMap<String, String>> {
     match url.split_once('?') {
         Some((_path, query)) => {
             let params = query
+                .replace('+', " ")
                 .split('&')
                 .filter_map(|pair| {
                     let (key, value) = pair.split_once('=')?;

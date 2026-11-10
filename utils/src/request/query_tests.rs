@@ -25,9 +25,9 @@ fn param_with_empty_value() {
 }
 
 #[test]
-fn param_value_with_special_characters() {
+fn plus_sign_is_treated_as_space() {
     let params = extract_params("/search?q=hello+world").unwrap();
-    assert_eq!(params["q"], "hello+world");
+    assert_eq!(params["q"], "hello world");
 }
 
 #[test]
