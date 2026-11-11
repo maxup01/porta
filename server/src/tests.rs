@@ -13,6 +13,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 fn limits() -> Limits {
     Limits {
         idle_timeout: std::time::Duration::from_millis(100),
+        // A refusal lingers until the client closes. Clients here that never do
+        // would otherwise hold every refusal test for the full two seconds.
+        linger_timeout: std::time::Duration::from_millis(100),
         ..Limits::default()
     }
 }
@@ -236,6 +239,89 @@ async fn declared_content_length_over_the_ceiling_is_rejected_before_reading_it(
     );
 }
 
+#[tokio::test]
+async fn a_refused_upload_is_drained_rather_than_cut_off() {
+    // The k6 failure: the client is still uploading when the 413 is decided from
+    // `Content-Length`. Over a socket, closing with that upload unread resets the
+    // connection, and the client's next write fails before it reads the answer.
+    // The pipe has no resets, so what is checked is the cause: the server must
+    // still be reading after it has answered. Without that, writing more than the
+    // pipe buffers blocks until the server is dropped, and then fails.
+    let limits = Limits {
+        max_request_bytes: 512,
+        linger_timeout: std::time::Duration::from_secs(5),
+        ..limits()
+    };
+
+    let (response, upload) = exchange_returning(limits, |mut client| async move {
+        client
+            .write_all(b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 1000000\r\n\r\n")
+            .await
+            .expect("headers");
+
+        let response = read_one_response(&mut client, &mut Vec::new()).await;
+
+        // Many times what the pipe holds, so it only gets through if read.
+        let upload = client.write_all(&vec![b'x'; READ_CHUNK_BYTES * 32]).await;
+        let _ = client.shutdown().await;
+
+        let mut rest = Vec::new();
+        let _ = client.read_to_end(&mut rest).await;
+
+        (response, upload)
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 413 Payload Too Large\r\n"),
+        "expected 413: {response}"
+    );
+    assert!(response.contains("Connection: close\r\n"), "{response}");
+    assert!(
+        upload.is_ok(),
+        "the rest of the upload should have been read and discarded: {upload:?}"
+    );
+}
+
+#[tokio::test]
+async fn lingering_after_a_refusal_is_bounded() {
+    // A client that keeps sending forever must not keep the connection forever.
+    let limits = Limits {
+        max_request_bytes: 512,
+        linger_timeout: std::time::Duration::from_millis(50),
+        ..limits()
+    };
+
+    let started = std::time::Instant::now();
+
+    let response = exchange_returning(limits, |mut client| async move {
+        client
+            .write_all(b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 1000000\r\n\r\n")
+            .await
+            .expect("headers");
+
+        let response = read_one_response(&mut client, &mut Vec::new()).await;
+
+        // Ends only when the server lets go of the connection.
+        while client.write_all(&[b'x'; 1024]).await.is_ok() {
+            tokio::task::yield_now().await;
+        }
+
+        response
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 413 Payload Too Large\r\n"),
+        "expected 413: {response}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "the server lingered for {:?}",
+        started.elapsed()
+    );
+}
+
 // ── Malformed input ──────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -252,7 +338,10 @@ async fn unparseable_header_block_is_rejected_with_400() {
 }
 
 #[tokio::test]
-async fn body_that_is_not_utf8_is_rejected_with_400() {
+async fn body_that_is_not_utf8_reaches_dispatch() {
+    // A binary body — CBOR, for one — is not UTF-8 and need not be. It is routed
+    // like any other, so an unregistered path answers 404 rather than the 400 a
+    // text-only reader would give it.
     let response = exchange(limits(), |client| {
         let mut request =
             b"POST /nothing-registered HTTP/1.1\r\nContent-Length: 4\r\n\r\n".to_vec();
@@ -260,6 +349,22 @@ async fn body_that_is_not_utf8_is_rejected_with_400() {
         request.extend([0xFF, 0xFE, 0xFD, 0xFC]);
 
         send_chunks(client, vec![request])
+    })
+    .await;
+
+    assert!(
+        response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+        "expected 404: {response}"
+    );
+}
+
+#[tokio::test]
+async fn header_block_that_is_not_utf8_is_rejected_with_400() {
+    let response = exchange(limits(), |client| {
+        send_chunks(
+            client,
+            vec![b"GET /nothing-registered HTTP/1.1\r\nX-Note: \xff\xfe\r\n\r\n".to_vec()],
+        )
     })
     .await;
 
@@ -843,7 +948,7 @@ async fn an_idle_connection_is_closed_without_a_second_response() {
 /// The route tables are process-global, so every path here is prefixed to keep
 /// these tests from colliding with each other or with `utils`'.
 fn register(method: Method, path: &str) {
-    fn handler(_: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+    fn handler(_: &[u8]) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
         Box::pin(async { utils::response::status_response(HttpStatus::Ok) })
     }
 
@@ -863,7 +968,7 @@ fn header_value<'a>(response: &'a str, name: &str) -> Option<&'a str> {
 #[tokio::test]
 async fn dispatch_answers_an_unroutable_path_with_404() {
     let response = dispatch(
-        "GET /nothing-registered HTTP/1.1\r\n\r\n",
+        b"GET /nothing-registered HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -876,7 +981,7 @@ async fn dispatch_answers_an_unroutable_path_with_404() {
 
 #[tokio::test]
 async fn dispatch_answers_a_malformed_request_line_with_400() {
-    let response = dispatch("GARBAGE", &CorsConfig::disabled()).await;
+    let response = dispatch(b"GARBAGE", &CorsConfig::disabled()).await;
 
     assert!(
         response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
@@ -890,7 +995,7 @@ async fn dispatch_answers_an_unimplemented_verb_with_501() {
     // no resource at all — RFC 9110 §15.6.2's definition of 501. Answering 404 would
     // blame the path for a fault in the method.
     let response = dispatch(
-        "CONNECT /nothing-registered HTTP/1.1\r\n\r\n",
+        b"CONNECT /nothing-registered HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -906,7 +1011,7 @@ async fn an_unimplemented_verb_is_501_even_where_the_path_is_served() {
     register(Method::GET, "/dispatch-501/items");
 
     let response = dispatch(
-        "TRACE /dispatch-501/items HTTP/1.1\r\n\r\n",
+        b"TRACE /dispatch-501/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -922,7 +1027,7 @@ async fn a_lowercase_verb_is_501() {
     register(Method::GET, "/dispatch-501-case/items");
 
     let response = dispatch(
-        "get /dispatch-501-case/items HTTP/1.1\r\n\r\n",
+        b"get /dispatch-501-case/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -938,7 +1043,7 @@ async fn an_implemented_verb_with_no_route_is_still_405() {
     register(Method::GET, "/dispatch-501-405/items");
 
     let response = dispatch(
-        "POST /dispatch-501-405/items HTTP/1.1\r\n\r\n",
+        b"POST /dispatch-501-405/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -953,7 +1058,7 @@ async fn an_implemented_verb_with_no_route_is_still_405() {
 #[tokio::test]
 async fn an_implemented_verb_on_an_unserved_path_is_still_404() {
     let response = dispatch(
-        "DELETE /nothing-registered-at-all HTTP/1.1\r\n\r\n",
+        b"DELETE /nothing-registered-at-all HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -972,7 +1077,7 @@ async fn a_405_names_the_methods_that_are_served() {
     register(Method::DELETE, "/dispatch-allow/items");
 
     let response = dispatch(
-        "POST /dispatch-allow/items HTTP/1.1\r\n\r\n",
+        b"POST /dispatch-allow/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -999,7 +1104,7 @@ async fn a_plain_options_request_is_answered_with_204_and_allow() {
     register(Method::POST, "/dispatch-options/items");
 
     let response = dispatch(
-        "OPTIONS /dispatch-options/items HTTP/1.1\r\n\r\n",
+        b"OPTIONS /dispatch-options/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -1017,7 +1122,7 @@ async fn a_plain_options_request_is_answered_with_204_and_allow() {
 #[tokio::test]
 async fn an_options_request_for_an_unserved_path_is_still_a_404() {
     let response = dispatch(
-        "OPTIONS /dispatch-options/nothing-here HTTP/1.1\r\n\r\n",
+        b"OPTIONS /dispatch-options/nothing-here HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -1033,7 +1138,7 @@ async fn an_options_request_ignores_the_query_string() {
     register(Method::GET, "/dispatch-options-query/items");
 
     let response = dispatch(
-        "OPTIONS /dispatch-options-query/items?id=5 HTTP/1.1\r\n\r\n",
+        b"OPTIONS /dispatch-options-query/items?id=5 HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -1054,7 +1159,7 @@ async fn a_head_request_is_answered_by_the_get_handler() {
     register(Method::GET, "/dispatch-head/items");
 
     let response = dispatch(
-        "HEAD /dispatch-head/items HTTP/1.1\r\n\r\n",
+        b"HEAD /dispatch-head/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -1067,7 +1172,7 @@ async fn a_head_response_has_no_body() {
     register(Method::GET, "/dispatch-head-empty/items");
 
     let response = dispatch(
-        "HEAD /dispatch-head-empty/items HTTP/1.1\r\n\r\n",
+        b"HEAD /dispatch-head-empty/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -1085,13 +1190,13 @@ async fn a_head_response_reports_the_length_a_get_would_have_sent() {
     register(Method::GET, "/dispatch-head-length/items");
 
     let from_get = dispatch(
-        "GET /dispatch-head-length/items HTTP/1.1\r\n\r\n",
+        b"GET /dispatch-head-length/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
 
     let from_head = dispatch(
-        "HEAD /dispatch-head-length/items HTTP/1.1\r\n\r\n",
+        b"HEAD /dispatch-head-length/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -1110,7 +1215,7 @@ async fn a_head_response_reports_the_length_a_get_would_have_sent() {
 #[tokio::test]
 async fn a_head_request_for_an_unserved_path_is_a_404_without_a_body() {
     let response = dispatch(
-        "HEAD /nothing-registered-for-head HTTP/1.1\r\n\r\n",
+        b"HEAD /nothing-registered-for-head HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -1131,7 +1236,7 @@ async fn a_head_request_against_a_route_without_get_is_a_405() {
     register(Method::POST, "/dispatch-head-405/items");
 
     let response = dispatch(
-        "HEAD /dispatch-head-405/items HTTP/1.1\r\n\r\n",
+        b"HEAD /dispatch-head-405/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;
@@ -1185,7 +1290,7 @@ async fn a_preflight_from_an_allowed_origin_is_granted() {
 
     let cors = CorsConfig::new(&[ORIGIN], false, None);
     let response = dispatch(
-        &preflight("/dispatch-preflight/users", "POST", ORIGIN),
+        preflight("/dispatch-preflight/users", "POST", ORIGIN).as_bytes(),
         &cors,
     )
     .await;
@@ -1214,11 +1319,12 @@ async fn a_preflight_from_an_unlisted_origin_gets_no_cors_headers() {
 
     let cors = CorsConfig::new(&[ORIGIN], false, None);
     let response = dispatch(
-        &preflight(
+        preflight(
             "/dispatch-preflight-denied/users",
             "POST",
             "http://evil.test",
-        ),
+        )
+        .as_bytes(),
         &cors,
     )
     .await;
@@ -1237,7 +1343,7 @@ async fn a_preflight_is_not_answered_when_no_policy_is_configured() {
     register(Method::POST, "/dispatch-preflight-off/users");
 
     let response = dispatch(
-        &preflight("/dispatch-preflight-off/users", "POST", ORIGIN),
+        preflight("/dispatch-preflight-off/users", "POST", ORIGIN).as_bytes(),
         &CorsConfig::disabled(),
     )
     .await;
@@ -1255,10 +1361,11 @@ async fn a_handler_response_carries_the_cors_headers() {
 
     let cors = CorsConfig::new(&[ORIGIN], false, None);
     let response = dispatch(
-        &format!(
+        format!(
             "GET /dispatch-cors/items HTTP/1.1\r\nOrigin: {}\r\n\r\n",
             ORIGIN
-        ),
+        )
+        .as_bytes(),
         &cors,
     )
     .await;
@@ -1277,10 +1384,11 @@ async fn a_generated_error_carries_the_cors_headers_too() {
     // 404, which is the whole reason CORS is hard to debug.
     let cors = CorsConfig::new(&["*"], false, None);
     let response = dispatch(
-        &format!(
+        format!(
             "GET /dispatch-cors/nowhere HTTP/1.1\r\nOrigin: {}\r\n\r\n",
             ORIGIN
-        ),
+        )
+        .as_bytes(),
         &cors,
     )
     .await;
@@ -1300,9 +1408,9 @@ async fn a_request_without_an_origin_is_answered_exactly_as_before() {
     register(Method::GET, "/dispatch-cors-plain/items");
 
     let cors = CorsConfig::new(&["*"], false, None);
-    let with_policy = dispatch("GET /dispatch-cors-plain/items HTTP/1.1\r\n\r\n", &cors).await;
+    let with_policy = dispatch(b"GET /dispatch-cors-plain/items HTTP/1.1\r\n\r\n", &cors).await;
     let without_policy = dispatch(
-        "GET /dispatch-cors-plain/items HTTP/1.1\r\n\r\n",
+        b"GET /dispatch-cors-plain/items HTTP/1.1\r\n\r\n",
         &CorsConfig::disabled(),
     )
     .await;

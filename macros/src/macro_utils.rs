@@ -686,7 +686,18 @@ pub fn generate_route_handler_tokens(
     let path_params: Vec<String> =
         utils::request::path_param::extract_path_param_names_from_path(path).collect();
 
-    let deserialized_args = generate_deserialization_block(&fn_args, &path_params);
+    // The argument the request body binds to: the first one the route pattern does
+    // not name. Only the verbs that carry a body have one.
+    let body_param: Option<String> = match http_method {
+        Method::POST | Method::PUT | Method::PATCH => fn_args
+            .iter()
+            .map(|(arg_name, _)| arg_name.to_string())
+            .find(|arg_name| !path_params.contains(arg_name)),
+        Method::GET | Method::DELETE => None,
+    };
+
+    let deserialized_args =
+        generate_deserialization_block(&fn_args, &path_params, body_param.as_deref());
 
     let register_fn_name = format_ident!("register_route_{}", fn_name);
 
@@ -696,19 +707,10 @@ pub fn generate_route_handler_tokens(
         // The verbs that carry a body. PUT replaces a resource where PATCH amends
         // one, but both bind the request body the same way.
         Method::POST | Method::PUT | Method::PATCH => {
-            let mut not_path_param: String = String::new();
-
-            for (arg_name, _) in &fn_args {
-                let arg_name_str = arg_name.to_string();
-
-                if !path_params.contains(&arg_name_str) {
-                    not_path_param = arg_name.to_string();
-                    break;
-                }
-            }
+            let not_path_param = body_param.clone().unwrap_or_default();
 
             quote! {
-                let body = match ::porta::utils::request::request_body::extract_request_body(request) {
+                let body = match ::porta::utils::request::request_body::extract_request_body(request_bytes) {
                     Some(body) => body,
                     None => {
                         return ::porta::utils::response::status_response(
@@ -716,7 +718,24 @@ pub fn generate_route_handler_tokens(
                         )}
                 };
 
-                map_with_params.insert(#not_path_param.to_string(), body);
+                // A CBOR body is binary and is decoded straight into the argument's
+                // type, so it stays out of `map_with_params`. Any other body is
+                // text, read the way it always was.
+                let cbor_body: Option<&[u8]> = if ::porta::utils::request::request_body::is_cbor(request) {
+                    Some(body)
+                } else {
+                    let body = match ::std::str::from_utf8(body) {
+                        Ok(body) => body,
+                        Err(_) => {
+                            return ::porta::utils::response::status_response(
+                                ::porta::utils::response::HttpStatus::BadRequest
+                            )}
+                    };
+
+                    map_with_params.insert(#not_path_param.to_string(), body.to_string());
+
+                    None
+                };
             }
         }
         Method::GET | Method::DELETE => {
@@ -731,8 +750,18 @@ pub fn generate_route_handler_tokens(
     };
 
     let fn_expanded = quote! {
-        #fn_vis async fn #fn_name(request: &str) -> String {
+        #fn_vis async fn #fn_name(request_bytes: &[u8]) -> String {
             #component_retrieval_block
+
+            // Everything that routes the request reads the header block, which is
+            // text. The body is read from `request_bytes`, since it need not be.
+            let request = match ::porta::utils::request::request_body::extract_request_head(request_bytes) {
+                Some(request_head) => request_head,
+                None => {
+                    return ::porta::utils::response::status_response(
+                        ::porta::utils::response::HttpStatus::BadRequest
+                    )}
+            };
 
             let path_from_request = match ::porta::utils::request::route::extract_path_from_request(request) {
                 Ok(path_from_request) => path_from_request,
@@ -778,7 +807,7 @@ pub fn generate_route_handler_tokens(
             // anonymous `impl Future` that no pointer type can name. Boxing it
             // here gives the table one concrete type for every handler.
             fn boxed_handler(
-                request: &str
+                request: &[u8]
             ) -> ::std::pin::Pin<::std::boxed::Box<
                 dyn ::std::future::Future<Output = String> + Send + '_
             >> {
@@ -819,6 +848,11 @@ fn method_tokens(http_method: &Method) -> TokenStream {
 ///   already a JSON object (`{...}`), it is wrapped in quotes first to allow
 ///   deserialization of string-backed enums and newtypes.
 ///
+/// The body argument is the exception when the request declares
+/// `Content-Type: application/cbor`: it is decoded from CBOR into its type, whatever
+/// that type is, and the strategies above are skipped. CBOR is typed, so a `String`
+/// or a `u64` needs no special case. A body that does not decode answers `400`.
+///
 /// # Which status a failure gets
 ///
 /// Where the value came from, not what type it was declared as. A path segment that
@@ -840,6 +874,8 @@ fn method_tokens(http_method: &Method) -> TokenStream {
 /// * `fn_args` - Slice of `(Ident, Type)` pairs representing the function parameters.
 /// * `path_params` - Names taken from the route pattern, so each argument can be told
 ///   apart from one bound out of the query string or the body.
+/// * `body_param` - The argument the body binds to, if the verb carries one. Its
+///   binding reads the generated `cbor_body` to choose between the two decoders.
 ///
 /// # Returns
 /// A `Vec<TokenStream>` where each element is a `let` binding that deserializes
@@ -847,6 +883,7 @@ fn method_tokens(http_method: &Method) -> TokenStream {
 fn generate_deserialization_block(
     fn_args: &Vec<(syn::Ident, syn::Type)>,
     path_params: &[String],
+    body_param: Option<&str>,
 ) -> Vec<TokenStream> {
     let mut deserialized = vec![];
 
@@ -862,7 +899,7 @@ fn generate_deserialization_block(
             quote! { ::porta::utils::response::HttpStatus::BadRequest }
         };
 
-        if ty_str == "u8"
+        let text_binding = if ty_str == "u8"
             || ty_str == "u16"
             || ty_str == "u32"
             || ty_str == "u64"
@@ -875,7 +912,7 @@ fn generate_deserialization_block(
             || ty_str == "f32"
             || ty_str == "f64"
         {
-            deserialized.push(quote! {
+            quote! {
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
@@ -888,9 +925,9 @@ fn generate_deserialization_block(
                     Err(_) => {
                         return ::porta::utils::response::status_response(#unparseable)}
                 };
-            });
+            }
         } else if ty_str == "bool" {
-            deserialized.push(quote! {
+            quote! {
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
@@ -904,9 +941,9 @@ fn generate_deserialization_block(
                     _ => {
                         return ::porta::utils::response::status_response(#unparseable)}
                 };
-            });
+            }
         } else if ty_str == "String" {
-            deserialized.push(quote! {
+            quote! {
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
@@ -915,9 +952,9 @@ fn generate_deserialization_block(
                         )}
                 };
                 let #arg_name: #arg_type = param_val_orig.to_string();
-            });
+            }
         } else {
-            deserialized.push(quote! {
+            quote! {
                 let param_val_orig = match map_with_params.get(&#arg_str[..]) {
                     Some(param_val) => param_val.as_str(),
                     None => {
@@ -940,7 +977,29 @@ fn generate_deserialization_block(
                     Err(_) => {
                         return ::porta::utils::response::status_response(#unparseable)}
                 };
+            }
+        };
+
+        if body_param == Some(arg_str.as_str()) {
+            // The text binding is a run of statements ending in the `let` it is for,
+            // so a block that repeats the name yields the value.
+            deserialized.push(quote! {
+                let #arg_name: #arg_type = match cbor_body {
+                    Some(cbor_body) => match ::porta::utils::request::request_body::decode_cbor(cbor_body) {
+                        Ok(val) => val,
+                        Err(_) => {
+                            return ::porta::utils::response::status_response(
+                                ::porta::utils::response::HttpStatus::BadRequest
+                            )}
+                    },
+                    None => {
+                        #text_binding
+                        #arg_name
+                    }
+                };
             });
+        } else {
+            deserialized.push(text_binding);
         }
     }
 

@@ -13,6 +13,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::Instant;
 use utils::cors::{CorsConfig, is_preflight};
+use utils::request::request_body::extract_request_head;
 use utils::request::route::{
     Method, advertised_method_names, extract_method_from_request,
     extract_method_token_from_request, extract_path_from_request, get_route_function,
@@ -74,6 +75,18 @@ pub struct Limits {
     /// re-resolves DNS and re-checks the certificate instead of pinning one socket
     /// indefinitely.
     pub max_requests_per_connection: usize,
+
+    /// How long a refused connection keeps reading, and discarding, what the client
+    /// is still sending before the server closes it.
+    ///
+    /// A refusal is usually sent before the request has finished arriving — a `413`
+    /// is decided from `Content-Length` alone. Closing a socket with unread bytes in
+    /// its receive buffer makes the kernel answer with a reset instead of a clean
+    /// close, and a client still uploading learns of the reset from a failed write,
+    /// often before it has read the response that explains it. RFC 9112 §9.6 calls
+    /// for this lingering close. The bytes read during it are thrown away, so the
+    /// bound is on time rather than memory.
+    pub linger_timeout: Duration,
 }
 
 impl Default for Limits {
@@ -83,6 +96,7 @@ impl Default for Limits {
             request_timeout: Duration::from_secs(30),
             idle_timeout: Duration::from_secs(15),
             max_requests_per_connection: 100,
+            linger_timeout: Duration::from_secs(2),
         }
     }
 }
@@ -92,8 +106,9 @@ enum ReadOutcome {
     /// A complete, well-formed request.
     Request {
         /// The request itself, headers and body, without any bytes belonging to
-        /// whatever the client sent after it.
-        request: String,
+        /// whatever the client sent after it. Bytes, because a body need not be
+        /// text; only the header block is checked for UTF-8, in [`dispatch`].
+        request: Vec<u8>,
 
         /// Whether the client is willing to reuse the connection. Persistence
         /// needs both ends to agree, and this is the client's half of it.
@@ -156,9 +171,13 @@ where
             // that was too large is still arriving, and a request that did not
             // parse has no length to skip. Nothing after it can be framed, so the
             // answer is also the goodbye.
+            //
+            // The client may still be sending the rest of it, so the connection is
+            // closed by lingering rather than outright — see `linger`.
             ReadOutcome::Reject(status) => {
                 respond(stream, &closing(status_response(status))).await;
-                break;
+                linger(stream, limits.linger_timeout).await;
+                return;
             }
 
             ReadOutcome::Abandon => break,
@@ -189,6 +208,33 @@ where
     let _ = stream.shutdown().await;
 }
 
+/// Closes the connection after a refusal without destroying the refusal.
+///
+/// The write half is shut down first, so the client sees the response end and the
+/// `close_notify` that a TLS stream sends on shutdown. Reads still work after that,
+/// and whatever the client goes on sending is read and dropped until it closes its
+/// own side, the transport fails, or `timeout` passes. Only then is the stream let
+/// go, with nothing left unread to turn the close into a reset.
+///
+/// A client that keeps sending past `timeout` is cut off regardless, so a refused
+/// connection holds its slot for at most that long.
+async fn linger<S>(stream: &mut S, timeout: Duration)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let _ = stream.shutdown().await;
+
+    let deadline = Instant::now() + timeout;
+    let mut discarded = [0u8; READ_CHUNK_BYTES];
+
+    // EOF, a failed read and the deadline all end it the same way.
+    while let Ok(n) = read_chunk(stream, &mut discarded, deadline).await {
+        if n == 0 {
+            break;
+        }
+    }
+}
+
 /// Marks `response` as the last one on its connection.
 ///
 /// HTTP/1.1 treats a connection as persistent unless a response says otherwise, so
@@ -202,13 +248,22 @@ fn closing(response: String) -> String {
 /// Resolves a raw request to a response, without touching the transport.
 ///
 /// Separate from [`handle_connection`] so the routing decision — handler, `405` or
-/// `404` — can be tested against a plain string.
+/// `404` — can be tested against plain bytes.
+///
+/// Routing reads only the header block, and that is the part required to be UTF-8:
+/// a head that is not is answered `400`. The body is passed to the handler as it
+/// arrived, so a binary one such as CBOR reaches the decoder `Content-Type` names.
 ///
 /// Every answer leaves through here, which is what makes this the place to attach
 /// the CORS headers: a handler's response and a status the server generated itself
 /// need the same ones, and a browser rejects the second as readily as the first
 /// when they are missing.
-pub async fn dispatch(request: &str, cors: &CorsConfig) -> String {
+pub async fn dispatch(request_bytes: &[u8], cors: &CorsConfig) -> String {
+    let request = match extract_request_head(request_bytes) {
+        Some(request_head) => request_head,
+        None => return status_response(HttpStatus::BadRequest),
+    };
+
     let path = match extract_path_from_request(request) {
         Ok(path) => path,
         Err(_) => return status_response(HttpStatus::BadRequest),
@@ -240,7 +295,7 @@ pub async fn dispatch(request: &str, cors: &CorsConfig) -> String {
     // `GET` table is what makes that true of every route at once.
     let response = if method_token == Some("HEAD") {
         let answer = match get_route_function(path_without_query, Method::GET) {
-            Some(route_function) => route_function(request).await,
+            Some(route_function) => route_function(request_bytes).await,
             None => unroutable_response(path_without_query),
         };
 
@@ -250,7 +305,7 @@ pub async fn dispatch(request: &str, cors: &CorsConfig) -> String {
     } else {
         match extract_method_from_request(request) {
             Ok(method) => match get_route_function(path_without_query, method) {
-                Some(route_function) => route_function(request).await,
+                Some(route_function) => route_function(request_bytes).await,
                 None => unroutable_response(path_without_query),
             },
             Err(_) => status_response(HttpStatus::NotImplemented),
@@ -445,14 +500,9 @@ where
     // pipelined — in place for the next call.
     let request: Vec<u8> = buffered.drain(..total_len).collect();
 
-    // The request is complete, so a decoding failure is genuinely invalid UTF-8
-    // rather than a multi-byte character split across two reads.
-    match String::from_utf8(request) {
-        Ok(request) => ReadOutcome::Request {
-            request,
-            client_persists,
-        },
-        Err(_) => ReadOutcome::Reject(HttpStatus::BadRequest),
+    ReadOutcome::Request {
+        request,
+        client_persists,
     }
 }
 

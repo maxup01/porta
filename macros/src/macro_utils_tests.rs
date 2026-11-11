@@ -929,14 +929,14 @@ fn a_component_does_not_become_the_request_body() {
     let src = handler_src(f, "/tickets", Method::POST).replace(' ', "");
 
     assert!(
-        src.contains(r#"map_with_params.insert("body".to_string(),body)"#),
+        src.contains(r#"map_with_params.insert("body".to_string(),body.to_string())"#),
         "{src}"
     );
 }
 
 #[test]
 fn a_malformed_component_becomes_a_compile_error() {
-    // The handler is emitted as `fn(&str) -> String`, so a bad `#[component]`
+    // The handler is emitted as `fn(&[u8]) -> String`, so a bad `#[component]`
     // parameter cannot be reported by the generated code — it has to be reported
     // here, as a `compile_error!` the caller sees at the parameter they wrote.
     let f: ItemFn = parse_quote! {
@@ -1059,4 +1059,39 @@ fn a_struct_with_only_a_where_clause_is_rejected() {
     let item: ItemStruct = parse_quote! { struct Odd where Self: Sized { rows: Vec<u8> } };
 
     assert!(reject(item).is_err());
+}
+
+#[test]
+fn post_handler_decodes_a_cbor_body_into_the_body_param() {
+    let f: ItemFn =
+        parse_quote! { async fn create_item(id: u32, item: Item) -> String { String::new() } };
+    let src = handler_src(f, "/items/{id}", Method::POST).replace(' ', "");
+
+    assert!(src.contains("request_body::is_cbor(request)"), "{src}");
+    assert!(src.contains("letitem:Item=matchcbor_body"), "{src}");
+    assert!(
+        !src.contains("letid:u32=matchcbor_body"),
+        "a path param must never be read from the body: {src}"
+    );
+}
+
+#[test]
+fn get_handler_has_no_cbor_decoding() {
+    let f: ItemFn = parse_quote! { async fn get_item(id: u32) -> String { String::new() } };
+    let src = handler_src(f, "/items/{id}", Method::GET);
+
+    assert!(!src.contains("decode_cbor"), "{src}");
+    assert!(!src.contains("cbor_body"), "{src}");
+}
+
+#[test]
+fn handler_takes_the_request_as_bytes() {
+    let f: ItemFn = parse_quote! { async fn get_item(id: u32) -> String { String::new() } };
+    let src = handler_src(f, "/items/{id}", Method::GET).replace(' ', "");
+
+    assert!(
+        src.contains("asyncfnget_item(request_bytes:&[u8])->String"),
+        "{src}"
+    );
+    assert!(src.contains("extract_request_head(request_bytes)"), "{src}");
 }

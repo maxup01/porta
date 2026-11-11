@@ -133,6 +133,12 @@ Arguments are deserialized into their declared Rust type:
 - `String` is taken verbatim.
 - Any other type is deserialized via `serde_json` (so it must derive `Deserialize`). Values that are not already JSON objects are wrapped in quotes first, so string-backed enums and newtypes work — but JSON arrays as a top-level body do not.
 
+#### CBOR bodies
+
+A body sent with `Content-Type: application/cbor` is decoded from [CBOR](https://www.rfc-editor.org/rfc/rfc8949) instead, straight into the body argument's type through serde. The type rules above do not apply to it: CBOR is typed, so a struct, a `String` and a `u64` are all decoded as written, and a body that does not decode as that type is `400 Bad Request`. Parameters after the media type (`; charset=…`) are ignored.
+
+The body may be any bytes. Only the header block has to be UTF-8 — a request whose head is not is `400` — so a binary body reaches its handler as it arrived. A body without the CBOR media type is still read as text, and one that is not UTF-8 is `400`. Responses are always JSON.
+
 A parameter that is **missing** returns `400 Bad Request`.
 
 A parameter that is present but **cannot be read as its declared type** is answered by where the value came from, never by which type that was:
@@ -145,7 +151,7 @@ A parameter that is present but **cannot be read as its declared type** is answe
 
 The type is deliberately not part of the decision: `id: u64` and a newtype deriving `Deserialize` are the same mistake by the same caller, and sorting them by something a client cannot see would make the status change when a handler's signature does.
 
-Values are taken verbatim: percent-encoding is not decoded, so `/hello/John%20Doe` binds the literal `John%20Doe`.
+Values are taken verbatim: percent-encoding is not decoded, so `/hello/John%20Doe` binds the literal `John%20Doe`. The one exception is `+` in a query string, which is read as a space: `?q=hello+world` binds `hello world`.
 
 ### Route resolution
 
@@ -202,6 +208,8 @@ The connection ends when any of these happens, and the response before it carrie
 | A request was refused                  | `400`, `408`, `413`                                               |
 
 A refused request ends the connection because nothing after it can be framed: an oversized body is still arriving, and a request that did not parse has no length to skip past. A `404` or `405` is not a refusal — the request was well-formed, so the connection stays open.
+
+It ends by lingering rather than at once. The refusal is sent, the server closes its side, and then it reads and discards whatever the client is still sending — for at most 2 seconds — before letting go. Closing a socket with an upload still unread makes the kernel reset the connection, and a client mid-upload then sees a failed write, often before it has read the `413` that explains it. RFC 9112 §9.6 describes this, and nginx and Apache close the same way.
 
 An idle timeout produces no response at all. The client is very likely closing the connection at the same moment, and there is no fault to report.
 
@@ -471,7 +479,7 @@ do and is forbidden outright.
 
 - [x] **One status for one failure.** An unparseable parameter answers `404` for numeric and `bool` types but `400` for anything deserialized through `serde_json` — the Rust type decides, which is not something a caller can reason about.
 - [x] **Catch a handler panic** and answer `500`, rather than dropping the connection with no response. A panic while holding a component's `Mutex` also poisons it for the rest of the process, which needs an answer of its own.
-- [ ] **Accept binary bodies.** The request is handled as a `String` end to end, so uploads have to be base64'd inside JSON; lifting that is also what `multipart/form-data` and streaming would need.
+- [x] **Accept binary bodies.** The request is handled as a `String` end to end, so uploads have to be base64'd inside JSON; lifting that is also what `multipart/form-data` and streaming would need.
 
 ### Configuration
 

@@ -15,7 +15,11 @@ use std::{
 /// has no nameable type to put in a table. The future borrows the request for
 /// `'a`, which is why the pointer is higher-ranked over that lifetime: the
 /// response is produced while the caller still owns the request buffer.
-type RouteHandler = for<'a> fn(&'a str) -> Pin<Box<dyn Future<Output = String> + Send + 'a>>;
+///
+/// The request is bytes rather than text because its body need not be text — a
+/// CBOR body is binary. The handler reads the header block as text itself, through
+/// [`crate::request::request_body::extract_request_head`].
+type RouteHandler = for<'a> fn(&'a [u8]) -> Pin<Box<dyn Future<Output = String> + Send + 'a>>;
 
 /// Lazily initialized, thread-safe map of GET route paths to their handler functions.
 /// Populated at startup via route registration and consulted on each incoming GET request.
@@ -204,7 +208,7 @@ impl FromStr for Method {
 ///
 /// use std::{boxed::Box, pin::Pin};
 ///
-/// fn handler(body: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+/// fn handler(body: &[u8]) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
 ///     Box::pin(async { "Hello, world!".to_string() })
 /// }
 ///
@@ -256,7 +260,7 @@ pub fn get_route_handlers_by_method(
 ///
 /// use std::{boxed::Box, pin::Pin};
 ///
-/// fn handler(body: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+/// fn handler(body: &[u8]) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
 ///     Box::pin(async { "Hello, world!".to_string() })
 /// }
 ///
@@ -307,11 +311,11 @@ pub fn get_route_function(url: &str, method: Method) -> Option<RouteHandler> {
 ///
 /// use std::{boxed::Box, pin::Pin};
 ///
-/// async fn hello_handler(body: &str) -> String {
+/// async fn hello_handler(body: &[u8]) -> String {
 ///     "Hello, world!".to_string()
 /// }
 ///
-/// fn hello_handler_boxed(body: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+/// fn hello_handler_boxed(body: &[u8]) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
 ///     Box::pin(hello_handler(body))
 /// }
 ///
@@ -433,7 +437,7 @@ pub fn is_path_matching_route_path(path: &str, route_path: &str) -> bool {
 ///
 /// use std::{boxed::Box, pin::Pin};
 ///
-/// fn handler(id: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+/// fn handler(id: &[u8]) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
 ///     Box::pin(async { "Hello, world!".to_string() })
 /// }
 ///
@@ -476,7 +480,7 @@ pub fn path_exists(path: &str) -> bool {
 ///
 /// use std::{boxed::Box, pin::Pin};
 ///
-/// fn handler(request: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+/// fn handler(request: &[u8]) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
 ///     Box::pin(async { "Hello, world!".to_string() })
 /// }
 ///

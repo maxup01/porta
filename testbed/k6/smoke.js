@@ -179,8 +179,6 @@ export default function() {
                 "body over the ceiling is refused with 413": (r) => r.status === 413,
         });
 
-        // A body that is bytes rather than text. The server decodes with a checked
-        // conversion, so this must be refused rather than silently mangled.
         const invalidUtf8 = http.post(
                 `${BASE_URL}/users`,
                 new Uint8Array([0xff, 0xfe, 0xfd, 0xfc]).buffer,

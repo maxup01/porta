@@ -195,7 +195,7 @@ fn extract_method_unsupported_method_returns_err() {
 /// resolution rather than about handler bodies, so they wrap a fixed answer.
 macro_rules! test_handler {
     ($name:ident, $answer:expr) => {
-        fn $name(_: &str) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
+        fn $name(_: &[u8]) -> Pin<Box<dyn Future<Output = String> + Send + '_>> {
             Box::pin(async { $answer.to_string() })
         }
     };
@@ -370,7 +370,7 @@ async fn literal_segment_wins_over_parameter() {
         .expect("the literal route must be reachable");
 
     assert_eq!(
-        resolved("").await,
+        resolved(b"").await,
         "literal",
         "/regression-specificity/me must not be shadowed by /regression-specificity/{{id}}"
     );
@@ -379,7 +379,7 @@ async fn literal_segment_wins_over_parameter() {
     let resolved = get_route_function("/regression-specificity/42", Method::GET)
         .expect("the parameterised route must still match other values");
 
-    assert_eq!(resolved("").await, "param");
+    assert_eq!(resolved(b"").await, "param");
 }
 
 // ── methods_for_path ────────────────────────────────────────────────────

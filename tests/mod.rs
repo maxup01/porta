@@ -59,7 +59,7 @@ async fn get_item_by_query(id: u32) -> HttpResponse<Item> {
 
 #[tokio::test]
 async fn test_get_with_path_param() {
-    let response = get_item("GET /items/1").await;
+    let response = get_item(b"GET /items/1").await;
     eprintln!("{}", response);
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
@@ -70,7 +70,7 @@ async fn test_get_with_path_param() {
 
 #[tokio::test]
 async fn test_get_with_query_param() {
-    let response = get_item_by_query("GET /items?id=5").await;
+    let response = get_item_by_query(b"GET /items?id=5").await;
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
     let item: Item = serde_json::from_str(body).unwrap();
@@ -79,7 +79,7 @@ async fn test_get_with_query_param() {
 
 #[tokio::test]
 async fn test_get_with_invalid_path_param_returns_404() {
-    let response = get_item("GET /items/abc").await;
+    let response = get_item(b"GET /items/abc").await;
     eprintln!("{}", response);
     assert!(response.starts_with(EXPECTED_404_PREFIX));
 }
@@ -89,7 +89,7 @@ async fn test_get_with_invalid_query_param_returns_400() {
     // `/items` exists and matched without consulting `id`, so an unreadable `id` is
     // a malformed request rather than a missing resource. Contrast the test above,
     // where the unreadable value *is* the path segment and so names nothing.
-    let response = get_item_by_query("GET /items?id=abc").await;
+    let response = get_item_by_query(b"GET /items?id=abc").await;
     eprintln!("{}", response);
     assert!(response.starts_with(EXPECTED_400_PREFIX));
 }
@@ -104,12 +104,114 @@ async fn create_item(name: String) -> HttpResponse<Created> {
 #[tokio::test]
 async fn test_post_extracts_body() {
     let response =
-        create_item("POST /items HTTP/1.1\r\nContent-Type: application/json\r\n\r\nwidget").await;
+        create_item(b"POST /items HTTP/1.1\r\nContent-Type: application/json\r\n\r\nwidget").await;
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
     let created: Created = serde_json::from_str(body).unwrap();
     assert_eq!(created.name, "widget");
     assert_eq!(created.id, 1);
+}
+
+// ── CBOR bodies ──────────────────────────────────────────────────────────────
+
+#[post(path = "/cbor-items/{id}")]
+async fn create_cbor_item(id: u32, item: Item) -> HttpResponse<Created> {
+    HttpResponse::new(
+        Created {
+            id: id + item.id,
+            name: item.name,
+        },
+        HttpStatus::Ok,
+    )
+}
+
+/// A request carrying `body` encoded as CBOR, the way a CBOR client sends it.
+fn cbor_request(target: &str, content_type: &str, body: &impl Serialize) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    ciborium::into_writer(body, &mut encoded).expect("encodes");
+
+    let mut request = format!(
+        "POST {} HTTP/1.1\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
+        target,
+        content_type,
+        encoded.len()
+    )
+    .into_bytes();
+    request.extend(encoded);
+
+    request
+}
+
+#[tokio::test]
+async fn test_post_decodes_a_cbor_struct_body() {
+    let item = Item {
+        id: 2,
+        name: "a+b".to_string(),
+    };
+    let request = cbor_request("/cbor-items/40", "application/cbor", &item);
+    assert!(
+        std::str::from_utf8(&request).is_err(),
+        "the fixture should exercise a body that is not UTF-8"
+    );
+
+    let response = create_cbor_item(&request).await;
+
+    assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
+    let created: Created = serde_json::from_str(body_of(&response)).unwrap();
+    assert_eq!(created.id, 42);
+    // CBOR is not form encoding: a `+` is a `+`.
+    assert_eq!(created.name, "a+b");
+}
+
+#[tokio::test]
+async fn test_post_decodes_a_cbor_string_body() {
+    let request = cbor_request("/items", "application/cbor; charset=ignored", &"widget");
+
+    let response = create_item(&request).await;
+
+    assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
+    let created: Created = serde_json::from_str(body_of(&response)).unwrap();
+    // Decoded, not taken verbatim: the CBOR length prefix is not part of the name.
+    assert_eq!(created.name, "widget");
+}
+
+#[tokio::test]
+async fn test_post_with_malformed_cbor_returns_400() {
+    let mut request =
+        b"POST /cbor-items/1 HTTP/1.1\r\nContent-Type: application/cbor\r\n\r\n".to_vec();
+    request.extend([0xFF, 0x00, 0x13]);
+
+    let response = create_cbor_item(&request).await;
+
+    assert!(response.starts_with(EXPECTED_400_PREFIX), "{response}");
+}
+
+#[tokio::test]
+async fn test_post_with_cbor_of_the_wrong_shape_returns_400() {
+    // A text string where an `Item` is expected.
+    let request = cbor_request("/cbor-items/1", "application/cbor", &"not an item");
+
+    let response = create_cbor_item(&request).await;
+
+    assert!(response.starts_with(EXPECTED_400_PREFIX), "{response}");
+}
+
+#[tokio::test]
+async fn test_post_with_binary_body_but_no_cbor_content_type_returns_400() {
+    // Without the header nothing says the body is binary, so it is read as text,
+    // and bytes that are not UTF-8 cannot be.
+    let request = cbor_request(
+        "/cbor-items/1",
+        "application/octet-stream",
+        &Item {
+            id: 1,
+            name: "x".to_string(),
+        },
+    );
+
+    let response = create_cbor_item(&request).await;
+
+    assert!(response.starts_with(EXPECTED_400_PREFIX), "{response}");
 }
 
 // ── PATCH ────────────────────────────────────────────────────────────────────
@@ -122,7 +224,7 @@ async fn update_item(id: u32, name: String) -> HttpResponse<Updated> {
 #[tokio::test]
 async fn test_patch_with_path_param_and_body() {
     let response =
-        update_item("PATCH /items/7 HTTP/1.1\r\nContent-Type: application/json\r\n\r\nnewname")
+        update_item(b"PATCH /items/7 HTTP/1.1\r\nContent-Type: application/json\r\n\r\nnewname")
             .await;
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
@@ -134,7 +236,7 @@ async fn test_patch_with_path_param_and_body() {
 #[tokio::test]
 async fn test_patch_with_invalid_id_returns_404() {
     let response =
-        update_item("PATCH /items/abc HTTP/1.1\r\nContent-Type: application/json\r\n\r\nnewname")
+        update_item(b"PATCH /items/abc HTTP/1.1\r\nContent-Type: application/json\r\n\r\nnewname")
             .await;
     assert!(response.starts_with(EXPECTED_404_PREFIX));
 }
@@ -149,7 +251,7 @@ async fn replace_item(id: u32, name: String) -> HttpResponse<Updated> {
 #[tokio::test]
 async fn test_put_with_path_param_and_body() {
     let response =
-        replace_item("PUT /items/3 HTTP/1.1\r\nContent-Type: application/json\r\n\r\nreplaced")
+        replace_item(b"PUT /items/3 HTTP/1.1\r\nContent-Type: application/json\r\n\r\nreplaced")
             .await;
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
@@ -161,7 +263,7 @@ async fn test_put_with_path_param_and_body() {
 #[tokio::test]
 async fn test_put_with_invalid_id_returns_404() {
     let response =
-        replace_item("PUT /items/abc HTTP/1.1\r\nContent-Type: application/json\r\n\r\nreplaced")
+        replace_item(b"PUT /items/abc HTTP/1.1\r\nContent-Type: application/json\r\n\r\nreplaced")
             .await;
     assert!(response.starts_with(EXPECTED_404_PREFIX));
 }
@@ -169,7 +271,7 @@ async fn test_put_with_invalid_id_returns_404() {
 #[tokio::test]
 async fn test_put_without_body_returns_400() {
     let response =
-        replace_item("PUT /items/3 HTTP/1.1\r\nContent-Type: application/json\r\n\r\n").await;
+        replace_item(b"PUT /items/3 HTTP/1.1\r\nContent-Type: application/json\r\n\r\n").await;
     assert!(response.starts_with(EXPECTED_400_PREFIX));
 }
 
@@ -187,7 +289,7 @@ async fn delete_item_by_query(id: u32) -> HttpResponse<Deleted> {
 
 #[tokio::test]
 async fn test_delete_with_path_param() {
-    let response = delete_item("DELETE /items/3").await;
+    let response = delete_item(b"DELETE /items/3").await;
     eprintln!("{}", response);
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
@@ -197,7 +299,7 @@ async fn test_delete_with_path_param() {
 
 #[tokio::test]
 async fn test_delete_with_query_param() {
-    let response = delete_item_by_query("DELETE /items?id=9").await;
+    let response = delete_item_by_query(b"DELETE /items?id=9").await;
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
     let body = &response[response.find("\r\n\r\n").unwrap() + 4..];
     let deleted: Deleted = serde_json::from_str(body).unwrap();
@@ -206,14 +308,14 @@ async fn test_delete_with_query_param() {
 
 #[tokio::test]
 async fn test_delete_with_invalid_path_param_returns_404() {
-    let response = delete_item("DELETE /items/abc").await;
+    let response = delete_item(b"DELETE /items/abc").await;
     eprintln!("{}", response);
     assert!(response.starts_with(EXPECTED_404_PREFIX));
 }
 
 #[tokio::test]
 async fn test_delete_with_invalid_query_param_returns_400() {
-    let response = delete_item_by_query("DELETE /items?id=abc").await;
+    let response = delete_item_by_query(b"DELETE /items?id=abc").await;
     assert!(response.starts_with(EXPECTED_400_PREFIX));
 }
 
@@ -254,7 +356,7 @@ async fn error_body(name: String) -> HttpResponse<Created> {
 #[tokio::test]
 async fn malformed_request_line_returns_400() {
     // No second whitespace-delimited token, so there is no request target to read.
-    let response = error_item("GARBAGE").await;
+    let response = error_item(b"GARBAGE").await;
 
     assert!(
         response.starts_with(EXPECTED_400_PREFIX),
@@ -266,7 +368,7 @@ async fn malformed_request_line_returns_400() {
 async fn missing_parameter_returns_400_not_404() {
     // `id` is neither a path segment nor a query parameter here. A value that is
     // present but unparseable is a 404; one that is absent is a 400.
-    let response = error_by_query("GET /errors-query").await;
+    let response = error_by_query(b"GET /errors-query").await;
 
     assert!(
         response.starts_with(EXPECTED_400_PREFIX),
@@ -277,7 +379,7 @@ async fn missing_parameter_returns_400_not_404() {
 #[tokio::test]
 async fn post_with_empty_body_returns_400() {
     let response =
-        error_body("POST /errors-body HTTP/1.1\r\nContent-Type: application/json\r\n\r\n").await;
+        error_body(b"POST /errors-body HTTP/1.1\r\nContent-Type: application/json\r\n\r\n").await;
 
     assert!(
         response.starts_with(EXPECTED_400_PREFIX),
@@ -291,7 +393,7 @@ async fn post_with_empty_body_returns_400() {
 async fn query_string_is_stripped_before_path_params_are_matched() {
     // The handler splits the target itself: `/errors/7` must match `/errors/{id}`
     // even though the request carries a query string the route pattern cannot.
-    let response = error_item("GET /errors/7?unrelated=ignored").await;
+    let response = error_item(b"GET /errors/7?unrelated=ignored").await;
 
     assert!(
         response.starts_with(EXPECTED_OK_PREFIX),
@@ -306,7 +408,7 @@ async fn query_string_is_stripped_before_path_params_are_matched() {
 async fn query_parameter_overrides_path_parameter_of_the_same_name() {
     // Path params are collected first, then query params are merged over them.
     // Pinning this because it is a silent precedence rule, not an obvious one.
-    let response = error_item("GET /errors/7?id=9").await;
+    let response = error_item(b"GET /errors/7?id=9").await;
 
     assert!(response.starts_with(EXPECTED_OK_PREFIX));
 
@@ -318,7 +420,7 @@ async fn query_parameter_overrides_path_parameter_of_the_same_name() {
 
 #[tokio::test]
 async fn successful_response_carries_framing_headers() {
-    let response = get_item("GET /items/1").await;
+    let response = get_item(b"GET /items/1").await;
 
     assert!(response.contains("Content-Type: application/json\r\n"));
     assert!(response.contains("Date: "));
@@ -330,7 +432,7 @@ async fn successful_response_carries_framing_headers() {
 
 #[tokio::test]
 async fn error_response_carries_framing_headers() {
-    let response = get_item("GET /items/abc").await;
+    let response = get_item(b"GET /items/abc").await;
 
     assert!(response.contains("Content-Type: text/plain\r\n"));
     assert!(response.contains("Date: "));
@@ -340,8 +442,8 @@ async fn error_response_carries_framing_headers() {
 #[tokio::test]
 async fn content_length_matches_the_body_it_describes() {
     for response in [
-        get_item("GET /items/1").await,
-        get_item("GET /items/abc").await,
+        get_item(b"GET /items/1").await,
+        get_item(b"GET /items/abc").await,
     ] {
         let body = body_of(&response);
         let expected = format!("Content-Length: {}\r\n", body.len());
@@ -441,7 +543,7 @@ async fn create_greeting(#[component] greeter: &Greeter, name: String) -> HttpRe
 
 #[tokio::test]
 async fn a_handler_receives_the_component_it_asks_for() {
-    let response = record_hit("GET /hits").await;
+    let response = record_hit(b"GET /hits").await;
 
     assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
 
@@ -455,9 +557,10 @@ async fn a_component_keeps_its_state_between_requests() {
     // The whole point of a component: the second request sees what the first did.
     // Asserted as strictly-greater rather than exactly-one-more because the other
     // tests in this file share the counter and run on their own threads.
-    let first: Hits = serde_json::from_str(body_of(&record_hit("GET /hits").await)).expect("first");
+    let first: Hits =
+        serde_json::from_str(body_of(&record_hit(b"GET /hits").await)).expect("first");
     let second: Hits =
-        serde_json::from_str(body_of(&record_hit("GET /hits").await)).expect("second");
+        serde_json::from_str(body_of(&record_hit(b"GET /hits").await)).expect("second");
 
     assert!(
         second.total > first.total,
@@ -475,7 +578,7 @@ fn the_context_hands_back_one_shared_instance() {
 
 #[tokio::test]
 async fn a_component_sits_alongside_a_path_parameter() {
-    let response = greet("GET /greet/world").await;
+    let response = greet(b"GET /greet/world").await;
 
     assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
 
@@ -487,7 +590,7 @@ async fn a_component_sits_alongside_a_path_parameter() {
 #[tokio::test]
 async fn a_component_declared_before_the_body_does_not_take_it() {
     let response =
-        create_greeting("POST /greetings HTTP/1.1\r\nContent-Type: application/json\r\n\r\nworld")
+        create_greeting(b"POST /greetings HTTP/1.1\r\nContent-Type: application/json\r\n\r\nworld")
             .await;
 
     assert!(response.starts_with(EXPECTED_OK_PREFIX), "{response}");
